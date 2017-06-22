@@ -129,6 +129,26 @@ while (territories.length > territoryCount) {
     }
 }
 
+
+// suppose we just merged adjacent nations of the same color
+// this would lead to interesting variations in size and shape, and simplify border presentation
+
+for (let p of mass) {
+    for (let n of hex_neighbors(p)) {
+        if (hex_key(n) in territoryMap && territoryMap[hex_key(n)] != territoryMap[hex_key(p)] && territoryMap[hex_key(n)].color == territoryMap[hex_key(n)]) {
+            // merge the territories
+            let original = territoryMap[hex_key(p)];
+            let merged = territoryMap[hex_key(n)];
+            for (let q of mass) {
+                if (territoryMap[hex_key(q)] == merged) {
+                    territoryMap[hex_key(q)] = original;
+                    original.cells.push(q);
+                }
+            }
+        }
+    }
+}
+
 ctx.fillStyle = "#257";
 ctx.fillRect(0, 0, canvas.width, canvas.height);
 let stripeHeight = 6;
