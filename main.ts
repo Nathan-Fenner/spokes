@@ -135,7 +135,7 @@ while (territories.length > territoryCount) {
 
 for (let p of mass) {
     for (let n of hex_neighbors(p)) {
-        if (hex_key(n) in territoryMap && territoryMap[hex_key(n)] != territoryMap[hex_key(p)] && territoryMap[hex_key(n)].color == territoryMap[hex_key(n)]) {
+        if (hex_key(n) in territoryMap && territoryMap[hex_key(n)] != territoryMap[hex_key(p)] && territoryMap[hex_key(p)].color == territoryMap[hex_key(n)].color) {
             // merge the territories
             let original = territoryMap[hex_key(p)];
             let merged = territoryMap[hex_key(n)];
@@ -148,6 +148,26 @@ for (let p of mass) {
         }
     }
 }
+
+// with overwhelming likelihood, there are at least two nations.
+// we can ignore the case where this is not true (for now; I want to handle it eventually)
+
+let nations: Territory[] = [];
+for (let p of mass) {
+    let nation = territoryMap[hex_key(p)];
+    if (nations.indexOf(nation) == -1) {
+        nations.push(nation);
+    }
+}
+
+// nations have an owner (which is a player)
+
+// the goal of the game's design is to make a 4X game where rapidly expanding in the early game is a bad strategy.
+// in particular, long-term harmony with your neighbors should be your best strategy.
+
+// nations are mostly separate (even under the same empire), to simplify gameplay and design
+
+
 
 ctx.fillStyle = "#257";
 ctx.fillRect(0, 0, canvas.width, canvas.height);
