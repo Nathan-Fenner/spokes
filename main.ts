@@ -13,16 +13,16 @@ function randomChoose<T>(xs: T[]): T {
 type HexPos = {hx: number, hy: number};
 type WorldPos = {wx: number, wy: number};
 
-function hex_to_world(pos: {hx: number, hy: number}) {
+function hexToWorld(pos: {hx: number, hy: number}) {
     let {hx, hy} = pos;
     return {wx: hx * 7/8, wy: hx*1/2 - hy*Math.sqrt(3)/2};
 }
 
-function hex_key(cell: HexPos): string {
+function hexKey(cell: HexPos): string {
     return cell.hx + "H" + cell.hy;
 }
 
-function hex_neighbors(p: HexPos): HexPos[] {
+function hexNeighbors(p: HexPos): HexPos[] {
     let result = [];
     for (let {dx, dy} of [{dx: 1, dy: 0}, {dx: 1, dy: 1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: -1, dy: -1}, {dx: 0, dy: -1}]) {
         result.push({hx: p.hx + dx, hy: p.hy + dy});
@@ -34,7 +34,7 @@ function hexOffset(p: HexPos, d1: number, d2: number): HexPos {
     return { hx: p.hx + d1, hy: p.hy + d2 };
 }
 
-function hex_dist(p: HexPos, q: HexPos): number {
+function hexDistance(p: HexPos, q: HexPos): number {
     if (p.hx == q.hx || p.hy == q.hy) {
         return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
     }
@@ -47,12 +47,12 @@ function hex_dist(p: HexPos, q: HexPos): number {
 // world generation
 // randomly grow a mass
 let mass: HexPos[] = [{hx: 0, hy: 0}];
-let mass_set: {[k: string]: boolean} = {[hex_key(mass[0])]: true};
+let massSet: {[k: string]: boolean} = {[hexKey(mass[0])]: true};
 type Avoider = HexPos & {r: number};
 let avoiders: Avoider[] = [];
 
-let avoider_count = Math.random() * 200;
-for (let i = 0; i < avoider_count; i++) {
+let avoiderCount = Math.random() * 200;
+for (let i = 0; i < avoiderCount; i++) {
     avoiders.push({
         hx: Math.random() * 100 - 50,
         hy: Math.random() * 100 - 50,
@@ -62,14 +62,14 @@ for (let i = 0; i < avoider_count; i++) {
 
 while (mass.length < 1000) {
     let from = mass[Math.random()*mass.length|0];
-    let neighbor = hex_neighbors(from)[Math.random()*6|0];
-    let signature = hex_key(neighbor);
-    if (signature in mass_set) {
+    let neighbor = hexNeighbors(from)[Math.random()*6|0];
+    let signature = hexKey(neighbor);
+    if (signature in massSet) {
         continue;
     }
     let reject = 0;
     for (let avoider of avoiders) {
-        reject = Math.max(reject, avoider.r - 2 * hex_dist(neighbor, avoider) ** 0.5);
+        reject = Math.max(reject, avoider.r - 2 * hexDistance(neighbor, avoider) ** 0.5);
     }
     // 0.9 is the fuzziness parameter.
     // if it's higher, borders become sharper but more regular
@@ -78,7 +78,7 @@ while (mass.length < 1000) {
         continue;
     }
     mass.push(neighbor);
-    mass_set[signature] = true;
+    massSet[signature] = true;
 }
 
 // the landmass has been made
@@ -98,12 +98,12 @@ let territories: Territory[] = [];
 let territoryMap: {[k: string]: Territory} = {};
 
 for (let cell of mass) {
-    territoryMap[hex_key(cell)] = {
-        id: hex_key(cell),
+    territoryMap[hexKey(cell)] = {
+        id: hexKey(cell),
         cells: [cell],
         color: randomChoose(["#083", "#093", "#007B33", "#A94", "#983", "#AAC"]),
     };
-    territories.push(territoryMap[hex_key(cell)]);
+    territories.push(territoryMap[hexKey(cell)]);
 }
 
 while (territories.length > territoryCount) {
@@ -121,14 +121,14 @@ while (territories.length > territoryCount) {
     let neighboringTerritory: Territory | null = null;
     while (neighboringTerritory == null) {
         let contained = randomChoose(smallestTerritory.cells);
-        let neighbor = randomChoose(hex_neighbors(contained));
-        if (territoryMap[hex_key(neighbor)] && territoryMap[hex_key(neighbor)] != smallestTerritory) {
-            neighboringTerritory = territoryMap[hex_key(neighbor)];
+        let neighbor = randomChoose(hexNeighbors(contained));
+        if (territoryMap[hexKey(neighbor)] && territoryMap[hexKey(neighbor)] != smallestTerritory) {
+            neighboringTerritory = territoryMap[hexKey(neighbor)];
         }
     }
     // merge the two
     for (let cell of smallestTerritory.cells) {
-        territoryMap[hex_key(cell)] = neighboringTerritory;
+        territoryMap[hexKey(cell)] = neighboringTerritory;
         neighboringTerritory.cells.push(cell);
     }
 }
@@ -138,14 +138,14 @@ while (territories.length > territoryCount) {
 // this would lead to interesting variations in size and shape, and simplify border presentation
 
 for (let p of mass) {
-    for (let n of hex_neighbors(p)) {
-        if (hex_key(n) in territoryMap && territoryMap[hex_key(n)] != territoryMap[hex_key(p)] && territoryMap[hex_key(p)].color == territoryMap[hex_key(n)].color) {
+    for (let n of hexNeighbors(p)) {
+        if (hexKey(n) in territoryMap && territoryMap[hexKey(n)] != territoryMap[hexKey(p)] && territoryMap[hexKey(p)].color == territoryMap[hexKey(n)].color) {
             // merge the territories
-            let original = territoryMap[hex_key(p)];
-            let merged = territoryMap[hex_key(n)];
+            let original = territoryMap[hexKey(p)];
+            let merged = territoryMap[hexKey(n)];
             for (let q of mass) {
-                if (territoryMap[hex_key(q)] == merged) {
-                    territoryMap[hex_key(q)] = original;
+                if (territoryMap[hexKey(q)] == merged) {
+                    territoryMap[hexKey(q)] = original;
                     original.cells.push(q);
                 }
             }
@@ -165,15 +165,15 @@ type Nation = {
 let usedTerritories: Territory[] = [];
 let nations: Nation[] = [];
 for (let p of mass) {
-    let territory = territoryMap[hex_key(p)];
+    let territory = territoryMap[hexKey(p)];
     if (usedTerritories.indexOf(territory) == -1) {
         usedTerritories.push(territory);
         let capitol = territory.cells[Math.random() * territory.cells.length | 0];
         let color = "#F00";
         let nonBorder = territory.cells.filter((p) => {
-            for (let n of hex_neighbors(p)) {
-                if (hex_key(n) in mass_set) {
-                    if (territoryMap[hex_key(n)] != territoryMap[hex_key(p)]) {
+            for (let n of hexNeighbors(p)) {
+                if (hexKey(n) in massSet) {
+                    if (territoryMap[hexKey(n)] != territoryMap[hexKey(p)]) {
                         return false;
                     }
                 }
@@ -214,7 +214,7 @@ let scale = 12;
 let size = (scale * 0.876) | 0;
 
 function fillHexCell(pos: HexPos, resize = 1) {
-    let d = hex_to_world(pos);
+    let d = hexToWorld(pos);
     let drawSize = Math.ceil(size*resize);
     if (drawSize % 2 != 0) {
         drawSize++; // TODO: something better?
@@ -224,7 +224,7 @@ function fillHexCell(pos: HexPos, resize = 1) {
 }
 
 for (let p of mass) {
-    ctx.fillStyle = territoryMap[hex_key(p)].color;
+    ctx.fillStyle = territoryMap[hexKey(p)].color;
     fillHexCell(p);
 }
 for (let nation of nations) {
