@@ -30,6 +30,10 @@ function hex_neighbors(p: HexPos): HexPos[] {
     return result
 }
 
+function hexOffset(p: HexPos, d1: number, d2: number): HexPos {
+    return { hx: p.hx + d1, hy: p.hy + d2 };
+}
+
 function hex_dist(p: HexPos, q: HexPos): number {
     if (p.hx == q.hx || p.hy == q.hy) {
         return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
@@ -43,7 +47,7 @@ function hex_dist(p: HexPos, q: HexPos): number {
 // world generation
 // randomly grow a mass
 let mass: HexPos[] = [{hx: 0, hy: 0}];
-let mass_set: {[k: string]: boolean} = {"0,0": true};
+let mass_set: {[k: string]: boolean} = {[hex_key(mass[0])]: true};
 type Avoider = HexPos & {r: number};
 let avoiders: Avoider[] = [];
 
@@ -59,7 +63,7 @@ for (let i = 0; i < avoider_count; i++) {
 while (mass.length < 1000) {
     let from = mass[Math.random()*mass.length|0];
     let neighbor = hex_neighbors(from)[Math.random()*6|0];
-    let signature = neighbor.hx + "," + neighbor.hy;
+    let signature = hex_key(neighbor);
     if (signature in mass_set) {
         continue;
     }
@@ -152,11 +156,39 @@ for (let p of mass) {
 // with overwhelming likelihood, there are at least two nations.
 // we can ignore the case where this is not true (for now; I want to handle it eventually)
 
-let nations: Territory[] = [];
+type Nation = {
+    cells: HexPos[],
+    color: string,
+    capitol: HexPos,
+};
+
+let usedTerritories: Territory[] = [];
+let nations: Nation[] = [];
 for (let p of mass) {
-    let nation = territoryMap[hex_key(p)];
-    if (nations.indexOf(nation) == -1) {
-        nations.push(nation);
+    let territory = territoryMap[hex_key(p)];
+    if (usedTerritories.indexOf(territory) == -1) {
+        usedTerritories.push(territory);
+        let capitol = territory.cells[Math.random() * territory.cells.length | 0];
+        let color = "#F00";
+        let nonBorder = territory.cells.filter((p) => {
+            for (let n of hex_neighbors(p)) {
+                if (hex_key(n) in mass_set) {
+                    if (territoryMap[hex_key(n)] != territoryMap[hex_key(p)]) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+        if (nonBorder.length > 0) {
+            color = "#FF0";
+            capitol = nonBorder[Math.random() * nonBorder.length | 0];
+        }
+        nations.push({
+            cells: territory.cells,
+            color,
+            capitol,
+        });
     }
 }
 
@@ -169,6 +201,7 @@ for (let p of mass) {
 
 
 
+
 ctx.fillStyle = "#257";
 ctx.fillRect(0, 0, canvas.width, canvas.height);
 let stripeHeight = 6;
@@ -178,10 +211,25 @@ for (let stripe = 0; stripe < canvas.height; stripe += stripeHeight*2) {
 }
 
 let scale = 12;
-let size = (scale * 0.876 + 1) | 0;
-let shape = 1;
+let size = (scale * 0.876) | 0;
+
+function fillHexCell(pos: HexPos, resize = 1) {
+    let d = hex_to_world(pos);
+    let drawSize = Math.ceil(size*resize);
+    if (drawSize % 2 != 0) {
+        drawSize++; // TODO: something better?
+    }
+    drawSize++;
+    ctx.fillRect(canvas.width/2 + d.wx*scale - drawSize/2 | 0, canvas.height/2 + d.wy*scale - drawSize/2 | 0, drawSize, drawSize);
+}
+
 for (let p of mass) {
-    let d = hex_to_world(p);
     ctx.fillStyle = territoryMap[hex_key(p)].color;
-    ctx.fillRect(canvas.width/2 + d.wx*scale - size/2 | 0, canvas.height/2 + d.wy*scale - size*shape/2 | 0, size, size*shape);
+    fillHexCell(p);
+}
+for (let nation of nations) {
+    ctx.fillStyle = "#FFF";
+    fillHexCell(nation.capitol, 1.2);
+    ctx.fillStyle = nation.color;
+    fillHexCell(nation.capitol, 0.9);
 }
