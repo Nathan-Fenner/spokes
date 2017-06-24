@@ -4,6 +4,10 @@ canvas.width = 900;
 canvas.height = 600;
 let ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 
+let globalOptions = {
+    politicalMap: false,
+};
+
 // build a hex grid
 
 function randomChoose<T>(xs: T[]): T {
@@ -178,12 +182,13 @@ type Nation = {
 
 let usedTerritories: Territory[] = [];
 let nations: Nation[] = [];
+let nationMap: {[k: string]: Nation} = {};
 for (let p of mass) {
     let territory = territoryMap[hexKey(p)];
     if (usedTerritories.indexOf(territory) == -1) {
         usedTerritories.push(territory);
         let capitol = territory.cells[Math.random() * territory.cells.length | 0];
-        let color = "#F00";
+        let color = randomChoose(["#F00", "#FF0", "#00F"]);
         let nonBorder = territory.cells.filter((p) => {
             for (let n of hexNeighbors(p)) {
                 if (hexKey(n) in massSet) {
@@ -195,14 +200,17 @@ for (let p of mass) {
             return true;
         });
         if (nonBorder.length > 0) {
-            color = "#FF0";
             capitol = nonBorder[Math.random() * nonBorder.length | 0];
         }
-        nations.push({
+        let nation = {
             cells: territory.cells,
             color,
             capitol,
-        });
+        };
+        nations.push(nation);
+        for (let cell of territory.cells) {
+            nationMap[hexKey(cell)] = nation;
+        }
     }
 }
 
@@ -237,18 +245,25 @@ function drawWorld() {
         ctx.fillStyle = territoryMap[hexKey(p)].color;
         fillHexCell(p);
     }
+
+    if (globalOptions.politicalMap) {
+        for (let p of mass) {
+            ctx.fillStyle = nationMap[hexKey(p)].color;
+            fillHexCell(p, 0.36);
+        }
+    }
     for (let nation of nations) {
         ctx.fillStyle = "#FFF";
         fillHexCell(nation.capitol, 1.2);
         ctx.fillStyle = nation.color;
         fillHexCell(nation.capitol, 0.9);
 
-        ctx.fillStyle = "#F00";
-        fillHexCell(hexOffset(nation.capitol, 1, 0), 0.5);
-        ctx.fillStyle = "#FF0";
-        fillHexCell(hexOffset(nation.capitol, 1, 1), 0.5);
-        ctx.fillStyle = "#00F";
-        fillHexCell(hexOffset(nation.capitol, 0, 1), 0.5);
+        // ctx.fillStyle = "#F00";
+        // fillHexCell(hexOffset(nation.capitol, 1, 0), 0.5);
+        // ctx.fillStyle = "#FF0";
+        // fillHexCell(hexOffset(nation.capitol, 1, 1), 0.5);
+        // ctx.fillStyle = "#00F";
+        // fillHexCell(hexOffset(nation.capitol, 0, 1), 0.5);
     }
     window.requestAnimationFrame(drawWorld);
 }
