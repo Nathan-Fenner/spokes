@@ -13,7 +13,21 @@ function randomChoose<T>(xs: T[]): T {
 type HexPos = {hx: number, hy: number};
 type WorldPos = {wx: number, wy: number};
 
+function hexToSnappedWorld(pos: {hx: number, hy: number}, scale: number) {
+    // scale = scale | 0;
+    if (scale % 2 != 0) {
+        // scale++;
+    }
+    let col = pos.hx;
+    let row = pos.hy + pos.hx;
+
+    row -= col * 1.5;
+    
+    return {wx: col * (scale) | 0, wy: row * (scale) | 0};
+}
+
 function hexToWorld(pos: {hx: number, hy: number}) {
+    // TODO: we can make this much nicer, if we ask for the scale
     let {hx, hy} = pos;
     return {wx: hx * 7/8, wy: hx*1/2 - hy*Math.sqrt(3)/2};
 }
@@ -199,37 +213,44 @@ for (let p of mass) {
 
 // nations are mostly separate (even under the same empire), to simplify gameplay and design
 
-
-
-
-ctx.fillStyle = "#257";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-let stripeHeight = 6;
-for (let stripe = 0; stripe < canvas.height; stripe += stripeHeight*2) {
-    ctx.fillStyle = "#194969";
-    ctx.fillRect(0, stripe, canvas.width, stripeHeight);
-}
-
 let scale = 12;
 let size = (scale * 0.876) | 0;
 
 function fillHexCell(pos: HexPos, resize = 1) {
-    let d = hexToWorld(pos);
-    let drawSize = Math.ceil(size*resize);
-    if (drawSize % 2 != 0) {
-        drawSize++; // TODO: something better?
-    }
-    drawSize++;
-    ctx.fillRect(canvas.width/2 + d.wx*scale - drawSize/2 | 0, canvas.height/2 + d.wy*scale - drawSize/2 | 0, drawSize, drawSize);
+    let d = hexToSnappedWorld(pos, scale);
+    let drawSize = Math.ceil(scale*resize);
+    ctx.fillRect(canvas.width/2 + d.wx - drawSize/2 | 0, canvas.height/2 + d.wy - drawSize/2 | 0, drawSize, drawSize);
 }
 
-for (let p of mass) {
-    ctx.fillStyle = territoryMap[hexKey(p)].color;
-    fillHexCell(p);
+function drawWorld() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#257";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let stripeHeight = 6;
+    for (let stripe = 0; stripe < canvas.height; stripe += stripeHeight*2) {
+        ctx.fillStyle = "#194969";
+        ctx.fillRect(0, stripe, canvas.width, stripeHeight);
+    }
+
+    for (let p of mass) {
+        ctx.fillStyle = territoryMap[hexKey(p)].color;
+        fillHexCell(p);
+    }
+    for (let nation of nations) {
+        ctx.fillStyle = "#FFF";
+        fillHexCell(nation.capitol, 1.2);
+        ctx.fillStyle = nation.color;
+        fillHexCell(nation.capitol, 0.9);
+
+        ctx.fillStyle = "#F00";
+        fillHexCell(hexOffset(nation.capitol, 1, 0), 0.5);
+        ctx.fillStyle = "#FF0";
+        fillHexCell(hexOffset(nation.capitol, 1, 1), 0.5);
+        ctx.fillStyle = "#00F";
+        fillHexCell(hexOffset(nation.capitol, 0, 1), 0.5);
+    }
+    window.requestAnimationFrame(drawWorld);
 }
-for (let nation of nations) {
-    ctx.fillStyle = "#FFF";
-    fillHexCell(nation.capitol, 1.2);
-    ctx.fillStyle = nation.color;
-    fillHexCell(nation.capitol, 0.9);
-}
+
+drawWorld();
