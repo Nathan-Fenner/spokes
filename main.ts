@@ -3,36 +3,36 @@ let canvas = document.getElementById("canvas") as HTMLCanvasElement;
 canvas.width = 900;
 canvas.height = 600;
 
-let globalOptions = {
-    politicalMap: false,
+// build a hex grid
+
+type GenerationParameters = {
+    avoiderCount: number,
+    tileCount: number,
+    smoothness: number,
 };
 
-// build a hex grid
+let generationParameters: GenerationParameters = {
+    avoiderCount: Math.random() * 200 | 0,
+    tileCount: Math.random() * 500 + 750 | 0,
+    smoothness: Math.random()**2 * 100,
+};
+
+// generation parameters (TODO: expose this in the UI)
+
 
 function randomChoose<T>(xs: T[]): T {
     return xs[Math.random() * xs.length|0];
+}
+function clamp(low: number, value: number, high: number): number {
+    return Math.min(high, Math.max(low, value));
 }
 
 type HexPos = {hx: number, hy: number};
 type WorldPos = {wx: number, wy: number};
 
-function hexToSnappedWorld(pos: {hx: number, hy: number}, scale: number) {
-    // scale = scale | 0;
-    if (scale % 2 != 0) {
-        // scale++;
-    }
-    let col = pos.hx;
-    let row = pos.hy + pos.hx;
-
-    row -= col * 1.5;
-    
-    return {wx: col * (scale) | 0, wy: row * (scale) | 0};
-}
-
 function hexToWorld(pos: {hx: number, hy: number}) {
-    // TODO: we can make this much nicer, if we ask for the scale
     let {hx, hy} = pos;
-    return {wx: hx * 7/8, wy: hx*1/2 - hy*Math.sqrt(3)/2};
+    return {wx: hx + hy*Math.cos(Math.PI*2/3), wy: hy * Math.sin(Math.PI*2/3)};
 }
 
 function hexKey(cell: HexPos): string {
@@ -59,10 +59,6 @@ function hexCorners(p: HexPos): WorldPos[] {
     return rs;
 }
 
-function hexOffset(p: HexPos, d1: number, d2: number): HexPos {
-    return { hx: p.hx + d1, hy: p.hy + d2 };
-}
-
 function hexDistance(p: HexPos, q: HexPos): number {
     if (p.hx == q.hx || p.hy == q.hy) {
         return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
@@ -80,8 +76,7 @@ let massSet: {[k: string]: boolean} = {[hexKey(mass[0])]: true};
 type Avoider = HexPos & {r: number};
 let avoiders: Avoider[] = [];
 
-let avoiderCount = Math.random() * 200;
-for (let i = 0; i < avoiderCount; i++) {
+for (let i = 0; i < generationParameters.avoiderCount; i++) {
     avoiders.push({
         hx: Math.random() * 100 - 50,
         hy: Math.random() * 100 - 50,
@@ -89,16 +84,16 @@ for (let i = 0; i < avoiderCount; i++) {
     });
 }
 
-while (mass.length < 1000) {
-    let from = mass[Math.random()*mass.length|0];
-    let neighbor = hexNeighbors(from)[Math.random()*6|0];
+while (mass.length < generationParameters.tileCount) {
+    let from = randomChoose(mass);
+    let neighbor = randomChoose(hexNeighbors(from));
     let signature = hexKey(neighbor);
     if (signature in massSet) {
         continue;
     }
     let reject = 0;
     for (let avoider of avoiders) {
-        reject = Math.max(reject, avoider.r - 2 * hexDistance(neighbor, avoider) ** 0.5);
+        reject = Math.max(reject, avoider.r - 2*hexDistance(neighbor, avoider)**0.5);
     }
     // 0.9 is the fuzziness parameter.
     // if it's higher, borders become sharper but more regular
@@ -122,6 +117,8 @@ type Territory = {
     cells: HexPos[],
     color: string,
 };
+
+// TODO: use height to determine territories
 
 let territories: Territory[] = [];
 let territoryMap: {[k: string]: Territory} = {};
@@ -310,14 +307,14 @@ varying vec3 fragmentColor;
 
 float random( vec3 p )
 {
-    vec3 r = vec3(23.14069263277926,2.665144142690225, -1.4583722432222111 );
+    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );
     return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );
 }
 
 void main(void) {
     float y = min(1.0, max(0.0, 0.4 - fragmentPosition.y * 0.25));
     float noise = random(floor(15.0 * fragmentPosition));
-    gl_FragColor = vec4(y * fragmentColor - noise * 0.025, 1.0);
+    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);
 }
 `;
 
@@ -437,7 +434,7 @@ while (1) {
         break;
     }
     let choice = randomChoose(unassigned);
-    massHeight[hexKey(choice.p)] = Math.max(0, Math.min(8, choice.v + randomChoose([0, 0, -1, 1])));
+    massHeight[hexKey(choice.p)] = clamp(0, choice.v + (Math.random()*100 < generationParameters.smoothness ? 0 : randomChoose([1, -1])), 8);
 }
 // Great! We're getting there.
 
@@ -535,17 +532,14 @@ for (let p of tiles) {
         triangleVertexArray.push(bx, cornerBHeight, by);
         triangleVertexArray.push(bx, 8, by);
 
-        
         for (let j = 0; j < 3; j++) {
             triangleColorArray.push(hexColor[0]*sideShadow, hexColor[1]*sideShadow, hexColor[2]*sideShadow);
         }
 
-        
         triangleVertexArray.push(ax, cornerAHeight, ay);
         triangleVertexArray.push(bx, 8, by);
         triangleVertexArray.push(ax, 8, ay);
 
-        
         for (let j = 0; j < 3; j++) {
             triangleColorArray.push(hexColor[0]*sideShadow, hexColor[1]*sideShadow, hexColor[2]*sideShadow);
         }
@@ -635,7 +629,18 @@ function lookAt(from: Vec3, to: Vec3): number[] {
         0, 0, 0, 1,
     ];
 }
-let cameraZoom = 1;
+let cameraFocus = function() {
+    let sum = {x: 0, y: 0};
+    for (let tile of mass) {
+        sum.x += hexToWorld(tile).wx;
+        sum.y += hexToWorld(tile).wy;
+    }
+    sum.x /= mass.length;
+    sum.y /= mass.length;
+    return sum;
+}();
+
+let cameraZoom = -1;
 let cameraViewAngle = 0;
 
 let mouseStart = {x: 0, y: 0};
@@ -653,7 +658,7 @@ canvas.addEventListener("mousemove", function(e: MouseEvent) {
     if (isDown) {
         cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
         cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-        cameraZoom = Math.max(-1, Math.min(4, cameraZoom));
+        cameraZoom = clamp(-2, cameraZoom, 2.5);
     }
     mouseLast = mouseCurrent;
 }, false);
@@ -672,7 +677,7 @@ canvas.addEventListener('touchmove', function(e) {
     if (isDown) {
         cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
         cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-        cameraZoom = Math.max(-1, Math.min(4, cameraZoom));
+        cameraZoom = clamp(-2, cameraZoom, 2.5);
     }
     mouseLast = mouseCurrent;
 }, false);
@@ -684,10 +689,20 @@ canvas.addEventListener('touchend', function(e) {
     isDown = false;
     e.preventDefault();
 }, false);
-
+let keysDown: {[k: string]: boolean} = {};
+document.addEventListener('keydown', function(e: KeyboardEvent) {
+    keysDown[e.key] = true;
+}, false);
+document.addEventListener('keyup', function(e: KeyboardEvent) {
+    keysDown[e.key] = false;
+}, false);
 let shift = Math.PI / 2;
 // Now, we get ready to draw our triangle:
+let lastTick = Date.now();
 function loop() {
+    let currentTick = Date.now();
+    let delta = currentTick - lastTick;
+    lastTick = currentTick;
     window.requestAnimationFrame(loop);
     // This says to clear both the color and depth buffers.
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -710,7 +725,8 @@ function loop() {
     // set the perspective
     let near = 0.1;
     let far = 80;
-    let zoomScale = Math.pow(2, cameraZoom);
+    let cameraDistance = 10 / Math.pow(2, cameraZoom);
+    let zoomScale = 2;
     gl.uniformMatrix4fv(perspectiveUniform, false, [
         zoomScale, 0, 0, 0,
         0, zoomScale, 0, 0,
@@ -719,15 +735,34 @@ function loop() {
     ]);
     let t = Date.now() / 1000 / 10;
 
+    let speed = 0.01;
+    if (keysDown.w) {
+        cameraFocus.x -= Math.cos(cameraViewAngle) * delta * speed;
+        cameraFocus.y -= Math.sin(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.s) {
+        cameraFocus.x += Math.cos(cameraViewAngle) * delta * speed;
+        cameraFocus.y += Math.sin(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.a) {
+        cameraFocus.x += Math.sin(cameraViewAngle) * delta * speed;
+        cameraFocus.y -= Math.cos(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.d) {
+        cameraFocus.x -= Math.sin(cameraViewAngle) * delta * speed;
+        cameraFocus.y += Math.cos(cameraViewAngle) * delta * speed;
+    }
+
+
     let from = [
-        Math.cos(cameraViewAngle) * 20,
-        -10,
-        Math.sin(cameraViewAngle) * 20,
+        Math.cos(cameraViewAngle) * cameraDistance + cameraFocus.x,
+        -3 - 0.5 * cameraDistance,
+        Math.sin(cameraViewAngle) * cameraDistance + cameraFocus.y,
     ];
     let to = [
+        cameraFocus.x,
         0,
-        0,
-        0,
+        cameraFocus.y,
     ];
     let forward: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
     normalizeSet(forward); // make it into a unit vector
@@ -748,67 +783,25 @@ function loop() {
         0, 0, 1, 0,
         -from[0], -from[1], -from[2], 1,
     ]);
-
-    // Let's draw the triangle!
-    // We tell WebGL to draw our triangle(s).
-    // TRIANGLES means that the attributes are grouped into [A1, B1, C1, A2, B2, C2, A3, B3, C3, ...]
-    // where Ai, Bi, Ci are the three vertices of each triangle.
-    // The other options are:
-    // * 
-    // * 
-    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 9);
+    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 3);
 }
+
 loop();
 
-
-/*
-let scale = 12;
-let size = (scale * 0.876) | 0;
-
-function fillHexCell(pos: HexPos, resize = 1) {
-    let d = hexToSnappedWorld(pos, scale);
-    let drawSize = Math.ceil(scale*resize);
-    ctx.fillRect(canvas.width/2 + d.wx - drawSize/2 | 0, canvas.height/2 + d.wy - drawSize/2 | 0, drawSize, drawSize);
+function humanize(variable: string): string {
+    return variable.split(/(?=[A-Z])/).join(" ").toLowerCase();
 }
 
-function drawWorld() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = "#257";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    let stripeHeight = 6;
-    for (let stripe = 0; stripe < canvas.height; stripe += stripeHeight*2) {
-        ctx.fillStyle = "#194969";
-        ctx.fillRect(0, stripe, canvas.width, stripeHeight);
+let parametersDiv = document.getElementById("parameters") as HTMLDivElement;
+parametersDiv.innerHTML += `<ul>`;
+function showParameter(name: keyof typeof generationParameters) {
+    let value = generationParameters[name];
+    if (typeof value == "number") {
+        value = Math.floor(value * 10 + 0.5) / 10;
     }
-
-    for (let p of mass) {
-        ctx.fillStyle = territoryMap[hexKey(p)].color;
-        fillHexCell(p);
-    }
-
-    if (globalOptions.politicalMap) {
-        for (let p of mass) {
-            ctx.fillStyle = nationMap[hexKey(p)].color;
-            fillHexCell(p, 0.36);
-        }
-    }
-    for (let nation of nations) {
-        ctx.fillStyle = "#FFF";
-        fillHexCell(nation.capitol, 1.2);
-        ctx.fillStyle = nation.color;
-        fillHexCell(nation.capitol, 0.9);
-
-        // ctx.fillStyle = "#F00";
-        // fillHexCell(hexOffset(nation.capitol, 1, 0), 0.5);
-        // ctx.fillStyle = "#FF0";
-        // fillHexCell(hexOffset(nation.capitol, 1, 1), 0.5);
-        // ctx.fillStyle = "#00F";
-        // fillHexCell(hexOffset(nation.capitol, 0, 1), 0.5);
-    }
-    window.requestAnimationFrame(drawWorld);
+    parametersDiv.innerHTML += `<li><em>${humanize(name)}</em>: ${value}`;
 }
-
-drawWorld();
-*/
-
+showParameter("tileCount");
+showParameter("avoiderCount");
+showParameter("smoothness");
+parametersDiv.innerHTML += `</ul>`;

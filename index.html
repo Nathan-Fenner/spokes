@@ -1,10 +1,61 @@
 <!doctype html>
 <html>
 <head>
-    <title>Spokes</title>
+<title>Spokes</title>
+<style>
+body {
+    text-align: center;
+    font-family: Arial;
+}
+h1, h2, h3, h4, p, div {
+    text-align: justify;
+}
+canvas {
+    max-width: 100%;
+}
+</style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
+    <div id="parameters"></div>
     <script src="main.js"></script>
+    <h1>"Spokes"</h1>
+    <p>This is a demo of a strategy map generation scheme I'm working on.</p>
+    <p>You can spin or turn with the mouse or touch motions (but I've only tested with Chrome) and pan with WASD.</p>
+    <p>The lightness of a hex corresponds to its height. The rounded borders between them and the lack of lighting can make this difficult to notice, however.</p>
+    <p>The map is guaranteed to be connected (with no islands) and almost guaranteed to be walkable (over smooth steps only) with some well-understood exceptions that I'm working on fixing.</p>
+    <h2>Generation Algorithm</h2>
+    <p>This is a high-level overview of generation procedure.</p>
+    <h3>Mass Shape</h3>
+    <p>
+        The island itself is "grown" from an initial seed of a single hexagon.
+        A cell is randomly chosen, and a uniformly chosen one of its six neighbors is expanded into unless that neighbor was already filled.
+        The process repeats until the desired number of cells have been filled in.
+    </p>
+    <p>
+        If this was all that was done, the shapes would be almost always a nearly uniform blob.
+        So, in addition, I randomly scatter a bunch of "repelling" points across the grid.
+        When "growing" near a repelling point, there's a high chance that the growth will be rejected.
+        This leads to the (usually) interesting shape of the island.
+    </p>
+    <h3>Height</h3>
+    <p>
+        Once the shape of the island is determined, the heightmap is built next.
+        Essentially, the heightmap is "grown" much like the mass itself, but within the boundary determined by the island's shape.
+        A random cell is chosen to begin, and given height 2 (though this is arbitrary).
+        Next, cells are randomly chosen, and they "expand" into one of their neighboring cells.
+        The neighbor gets a height which is either the same as, or one more or one less than, the cell it "grew" from.
+    </p>
+    <p>
+        The precise weights for height change can be varied to adjust how smooth the map is as a whole.
+        In addition, there's a hard cap on the min height (0) and max height (8) of any hex.
+        Hexes assigned heights outside that range are just clamped into it.
+    </p>
+    <h3>Presentation</h3>
+    <p>
+        In order to make it clearer which hexes are supposed to be walkable, they are "smoothed out".
+        The smoothing occurs between any two adjacent hexes whose height differs by 1.
+        Really, this is fairly straightforward; each corner is smoothed independently, and there are only a few cases that need to be considered.
+    </p>
 </body>
 </html>

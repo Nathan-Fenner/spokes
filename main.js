@@ -1,27 +1,21 @@
 var canvas = document.getElementById("canvas");
 canvas.width = 900;
 canvas.height = 600;
-var globalOptions = {
-    politicalMap: false
+var generationParameters = {
+    avoiderCount: Math.random() * 200 | 0,
+    tileCount: Math.random() * 500 + 750 | 0,
+    smoothness: Math.pow(Math.random(), 2) * 100
 };
-// build a hex grid
+// generation parameters (TODO: expose this in the UI)
 function randomChoose(xs) {
     return xs[Math.random() * xs.length | 0];
 }
-function hexToSnappedWorld(pos, scale) {
-    // scale = scale | 0;
-    if (scale % 2 != 0) {
-        // scale++;
-    }
-    var col = pos.hx;
-    var row = pos.hy + pos.hx;
-    row -= col * 1.5;
-    return { wx: col * (scale) | 0, wy: row * (scale) | 0 };
+function clamp(low, value, high) {
+    return Math.min(high, Math.max(low, value));
 }
 function hexToWorld(pos) {
-    // TODO: we can make this much nicer, if we ask for the scale
     var hx = pos.hx, hy = pos.hy;
-    return { wx: hx * 7 / 8, wy: hx * 1 / 2 - hy * Math.sqrt(3) / 2 };
+    return { wx: hx + hy * Math.cos(Math.PI * 2 / 3), wy: hy * Math.sin(Math.PI * 2 / 3) };
 }
 function hexKey(cell) {
     return cell.hx + "H" + cell.hy;
@@ -45,9 +39,6 @@ function hexCorners(p) {
     }
     return rs;
 }
-function hexOffset(p, d1, d2) {
-    return { hx: p.hx + d1, hy: p.hy + d2 };
-}
 function hexDistance(p, q) {
     if (p.hx == q.hx || p.hy == q.hy) {
         return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
@@ -62,17 +53,16 @@ function hexDistance(p, q) {
 var mass = [{ hx: 0, hy: 0 }];
 var massSet = (_a = {}, _a[hexKey(mass[0])] = true, _a);
 var avoiders = [];
-var avoiderCount = Math.random() * 200;
-for (var i = 0; i < avoiderCount; i++) {
+for (var i = 0; i < generationParameters.avoiderCount; i++) {
     avoiders.push({
         hx: Math.random() * 100 - 50,
         hy: Math.random() * 100 - 50,
         r: Math.random() * 5 + 2
     });
 }
-while (mass.length < 1000) {
-    var from = mass[Math.random() * mass.length | 0];
-    var neighbor = hexNeighbors(from)[Math.random() * 6 | 0];
+while (mass.length < generationParameters.tileCount) {
+    var from = randomChoose(mass);
+    var neighbor = randomChoose(hexNeighbors(from));
     var signature = hexKey(neighbor);
     if (signature in massSet) {
         continue;
@@ -95,6 +85,7 @@ while (mass.length < 1000) {
 // divide it into territories
 var territorySize = 30;
 var territoryCount = mass.length / territorySize + 1 | 0;
+// TODO: use height to determine territories
 var territories = [];
 var territoryMap = {};
 for (var _b = 0, mass_1 = mass; _b < mass_1.length; _b++) {
@@ -225,7 +216,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(23.14069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.4 - fragmentPosition.y * 0.25));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor - noise * 0.025, 1.0);\n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.4 - fragmentPosition.y * 0.25));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);\n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -323,7 +314,7 @@ while (1) {
         break;
     }
     var choice = randomChoose(unassigned);
-    massHeight[hexKey(choice.p)] = Math.max(0, Math.min(8, choice.v + randomChoose([0, 0, -1, 1])));
+    massHeight[hexKey(choice.p)] = clamp(0, choice.v + (Math.random() * 100 < generationParameters.smoothness ? 0 : randomChoose([1, -1])), 8);
 }
 // Great! We're getting there.
 var tiles = [];
@@ -491,7 +482,18 @@ function lookAt(from, to) {
         0, 0, 0, 1,
     ];
 }
-var cameraZoom = 1;
+var cameraFocus = function () {
+    var sum = { x: 0, y: 0 };
+    for (var _i = 0, mass_7 = mass; _i < mass_7.length; _i++) {
+        var tile = mass_7[_i];
+        sum.x += hexToWorld(tile).wx;
+        sum.y += hexToWorld(tile).wy;
+    }
+    sum.x /= mass.length;
+    sum.y /= mass.length;
+    return sum;
+}();
+var cameraZoom = -1;
 var cameraViewAngle = 0;
 var mouseStart = { x: 0, y: 0 };
 var isDown = false;
@@ -508,7 +510,7 @@ canvas.addEventListener("mousemove", function (e) {
     if (isDown) {
         cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
         cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-        cameraZoom = Math.max(-1, Math.min(4, cameraZoom));
+        cameraZoom = clamp(-2, cameraZoom, 2.5);
     }
     mouseLast = mouseCurrent;
 }, false);
@@ -527,7 +529,7 @@ canvas.addEventListener('touchmove', function (e) {
     if (isDown) {
         cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
         cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-        cameraZoom = Math.max(-1, Math.min(4, cameraZoom));
+        cameraZoom = clamp(-2, cameraZoom, 2.5);
     }
     mouseLast = mouseCurrent;
 }, false);
@@ -539,9 +541,20 @@ canvas.addEventListener('touchend', function (e) {
     isDown = false;
     e.preventDefault();
 }, false);
+var keysDown = {};
+document.addEventListener('keydown', function (e) {
+    keysDown[e.key] = true;
+}, false);
+document.addEventListener('keyup', function (e) {
+    keysDown[e.key] = false;
+}, false);
 var shift = Math.PI / 2;
 // Now, we get ready to draw our triangle:
+var lastTick = Date.now();
 function loop() {
+    var currentTick = Date.now();
+    var delta = currentTick - lastTick;
+    lastTick = currentTick;
     window.requestAnimationFrame(loop);
     // This says to clear both the color and depth buffers.
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -562,7 +575,8 @@ function loop() {
     // set the perspective
     var near = 0.1;
     var far = 80;
-    var zoomScale = Math.pow(2, cameraZoom);
+    var cameraDistance = 10 / Math.pow(2, cameraZoom);
+    var zoomScale = 2;
     gl.uniformMatrix4fv(perspectiveUniform, false, [
         zoomScale, 0, 0, 0,
         0, zoomScale, 0, 0,
@@ -570,15 +584,32 @@ function loop() {
         0, 0, near * far / (near - far) * 2, 0,
     ]);
     var t = Date.now() / 1000 / 10;
+    var speed = 0.01;
+    if (keysDown.w) {
+        cameraFocus.x -= Math.cos(cameraViewAngle) * delta * speed;
+        cameraFocus.y -= Math.sin(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.s) {
+        cameraFocus.x += Math.cos(cameraViewAngle) * delta * speed;
+        cameraFocus.y += Math.sin(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.a) {
+        cameraFocus.x += Math.sin(cameraViewAngle) * delta * speed;
+        cameraFocus.y -= Math.cos(cameraViewAngle) * delta * speed;
+    }
+    if (keysDown.d) {
+        cameraFocus.x -= Math.sin(cameraViewAngle) * delta * speed;
+        cameraFocus.y += Math.cos(cameraViewAngle) * delta * speed;
+    }
     var from = [
-        Math.cos(cameraViewAngle) * 20,
-        -10,
-        Math.sin(cameraViewAngle) * 20,
+        Math.cos(cameraViewAngle) * cameraDistance + cameraFocus.x,
+        -3 - 0.5 * cameraDistance,
+        Math.sin(cameraViewAngle) * cameraDistance + cameraFocus.y,
     ];
     var to = [
+        cameraFocus.x,
         0,
-        0,
-        0,
+        cameraFocus.y,
     ];
     var forward = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
     normalizeSet(forward); // make it into a unit vector
@@ -599,65 +630,24 @@ function loop() {
         0, 0, 1, 0,
         -from[0], -from[1], -from[2], 1,
     ]);
-    // Let's draw the triangle!
-    // We tell WebGL to draw our triangle(s).
-    // TRIANGLES means that the attributes are grouped into [A1, B1, C1, A2, B2, C2, A3, B3, C3, ...]
-    // where Ai, Bi, Ci are the three vertices of each triangle.
-    // The other options are:
-    // * 
-    // * 
-    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 9);
+    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 3);
 }
 loop();
+function humanize(variable) {
+    return variable.split(/(?=[A-Z])/).join(" ").toLowerCase();
+}
+var parametersDiv = document.getElementById("parameters");
+parametersDiv.innerHTML += "<ul>";
+function showParameter(name) {
+    var value = generationParameters[name];
+    if (typeof value == "number") {
+        value = Math.floor(value * 10 + 0.5) / 10;
+    }
+    parametersDiv.innerHTML += "<li><em>" + humanize(name) + "</em>: " + value;
+}
+showParameter("tileCount");
+showParameter("avoiderCount");
+showParameter("smoothness");
+parametersDiv.innerHTML += "</ul>";
 var _a;
-/*
-let scale = 12;
-let size = (scale * 0.876) | 0;
-
-function fillHexCell(pos: HexPos, resize = 1) {
-    let d = hexToSnappedWorld(pos, scale);
-    let drawSize = Math.ceil(scale*resize);
-    ctx.fillRect(canvas.width/2 + d.wx - drawSize/2 | 0, canvas.height/2 + d.wy - drawSize/2 | 0, drawSize, drawSize);
-}
-
-function drawWorld() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = "#257";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    let stripeHeight = 6;
-    for (let stripe = 0; stripe < canvas.height; stripe += stripeHeight*2) {
-        ctx.fillStyle = "#194969";
-        ctx.fillRect(0, stripe, canvas.width, stripeHeight);
-    }
-
-    for (let p of mass) {
-        ctx.fillStyle = territoryMap[hexKey(p)].color;
-        fillHexCell(p);
-    }
-
-    if (globalOptions.politicalMap) {
-        for (let p of mass) {
-            ctx.fillStyle = nationMap[hexKey(p)].color;
-            fillHexCell(p, 0.36);
-        }
-    }
-    for (let nation of nations) {
-        ctx.fillStyle = "#FFF";
-        fillHexCell(nation.capitol, 1.2);
-        ctx.fillStyle = nation.color;
-        fillHexCell(nation.capitol, 0.9);
-
-        // ctx.fillStyle = "#F00";
-        // fillHexCell(hexOffset(nation.capitol, 1, 0), 0.5);
-        // ctx.fillStyle = "#FF0";
-        // fillHexCell(hexOffset(nation.capitol, 1, 1), 0.5);
-        // ctx.fillStyle = "#00F";
-        // fillHexCell(hexOffset(nation.capitol, 0, 1), 0.5);
-    }
-    window.requestAnimationFrame(drawWorld);
-}
-
-drawWorld();
-*/
 //# sourceMappingURL=main.js.map
