@@ -11,7 +11,8 @@ h1, h2, h3, h4, p, div {
     text-align: justify;
 }
 canvas {
-    max-width: 100%;
+    width: 95vmin;
+    height: 95vmin;
 }
 </style>
 </head>
@@ -20,8 +21,10 @@ canvas {
     <div id="parameters"></div>
     <script src="main.js"></script>
     <h1>"Spokes"</h1>
+    <h2>Controls</h2>
+    <p>You can spin or zoom with the mouse/touch (but I've only tested with Chrome) and pan with WASD.</p>
+    <h2>Overview</h2>
     <p>This is a demo of a strategy map generation scheme I'm working on.</p>
-    <p>You can spin or turn with the mouse or touch motions (but I've only tested with Chrome) and pan with WASD.</p>
     <p>The lightness of a hex corresponds to its height. The rounded borders between them and the lack of lighting can make this difficult to notice, however.</p>
     <p>The map is guaranteed to be connected (with no islands) and almost guaranteed to be walkable (over smooth steps only) with some well-understood exceptions that I'm working on fixing.</p>
     <h2>Generation Algorithm</h2>
