@@ -2,7 +2,6 @@
     "compilerOptions": {
         "module": "commonjs",
         "sourceMap": true,
-        "strict": true,
         "strictNullChecks": true,
         "noImplicitAny": true
     }
