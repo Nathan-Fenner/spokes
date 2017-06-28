@@ -216,7 +216,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.4 - fragmentPosition.y * 0.25));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);\n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);\n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -393,7 +393,7 @@ var _loop_1 = function (p) {
         triangleVertexArray.push(ax, cornerAHeight, ay);
         triangleVertexArray.push(bx, cornerBHeight, by);
         var hexColor = [0.9, 0.65, 0.35];
-        hexColor = hexColor.map(function (x) { return x * (heightOf(p) / 5 * 0.5 + 0.5); });
+        hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
         var sideShadow = 0.4;
         var grassColor = [0.1, 0.56, 0.2];
         for (var j = 0; j < 3; j++) {

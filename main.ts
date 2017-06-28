@@ -312,7 +312,7 @@ float random( vec3 p )
 }
 
 void main(void) {
-    float y = min(1.0, max(0.0, 0.4 - fragmentPosition.y * 0.25));
+    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
     float noise = random(floor(15.0 * fragmentPosition));
     gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);
 }
@@ -520,7 +520,7 @@ for (let p of tiles) {
         triangleVertexArray.push(bx, cornerBHeight, by);
 
         let hexColor = [0.9, 0.65, 0.35];
-        hexColor = hexColor.map((x) => x * (heightOf(p) / 5 * 0.5 + 0.5));
+        hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
         let sideShadow = 0.4;
         let grassColor = [0.1, 0.56, 0.2];
 
