@@ -193,7 +193,6 @@ var tryGL = canvas.getContext("webgl");
 if (!tryGL) {
     throw "unable to get webGL context";
 }
-var triangles = 10000;
 var gl = tryGL;
 // We're going to make a basic program to start.
 // We'll just have a triangle.
@@ -216,7 +215,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);\n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor, 1.0);\n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -359,6 +358,10 @@ function cornerHeightCombine(self, hs) {
 // The Z component will be 0 for all of them.
 var triangleVertexArray = [];
 var triangleColorArray = [];
+function addTriangle(c1, c2, c3, color) {
+    triangleVertexArray.push.apply(triangleVertexArray, c1.concat(c2, c3));
+    triangleColorArray.push.apply(triangleColorArray, color.concat(color, color));
+}
 var _loop_1 = function (p) {
     var cs = hexCorners(p);
     var bladeCount = 30 * randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
@@ -381,7 +384,11 @@ var _loop_1 = function (p) {
         var height = cornerHeightCombine(heightOf(p), hs);
         corners.push({ point: point, height: height });
     }
-    for (var i = 0; i < 6; i++) {
+    var bladeChance = 1 / 300;
+    if (Math.random() < 1 / 30) {
+        bladeChance = 0.7;
+    }
+    var _loop_2 = function (i) {
         var _a = hexToWorld(p), wx = _a.wx, wy = _a.wy;
         var _b = corners[i].point, ax = _b.wx, ay = _b.wy; // cs[i];
         var _c = corners[(i + 1) % 6].point, bx = _c.wx, by = _c.wy;
@@ -389,28 +396,64 @@ var _loop_1 = function (p) {
         var mainHeight = reheight(heightOf(p));
         var cornerAHeight = reheight(corners[i].height);
         var cornerBHeight = reheight(corners[(i + 1) % 6].height);
-        triangleVertexArray.push(wx, mainHeight, wy);
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, cornerBHeight, by);
         var hexColor = [0.9, 0.65, 0.35];
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
+        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], hexColor);
         var sideShadow = 0.4;
-        var grassColor = [0.1, 0.56, 0.2];
-        for (var j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0], hexColor[1], hexColor[2]);
+        var grassColor = [0.3, 0.4, 0.2];
+        grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
+        addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], hexColor.map(function (x) { return x * sideShadow; }));
+        addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], hexColor.map(function (x) { return x * sideShadow; }));
+        while (Math.random() < bladeChance) {
+            // add a clump
+            var dm = Math.random() + 0.1;
+            var da = Math.random();
+            var db = Math.random();
+            var clumpX = (dm * wx + da * ax + db * bx) / (dm + da + db);
+            var clumpY = (dm * wy + da * ay + db * by) / (dm + da + db);
+            var clumpH = (dm * mainHeight + da * cornerAHeight + db * cornerBHeight) / (dm + da + db);
+            var size = 0.5 + Math.random() * 0.3;
+            for (var i_1 = 0; i_1 < 5 + Math.random() * 30; i_1++) {
+                var ox = (Math.random() * 2 - 1) * 0.05 * size;
+                var oy = (Math.random() * 2 - 1) * 0.05 * size;
+                var om = Math.sqrt(Math.pow(ox, 2) + Math.pow(oy, 2));
+                ox /= om;
+                oy /= om;
+                ox *= 0.05 * size;
+                oy *= 0.05 * size;
+                var sx = (Math.random() * 2 - 1) * 0.05 * size;
+                var sy = (Math.random() * 2 - 1) * 0.05 * size;
+                var lx = -oy; //(Math.random()*2-1) * 0.1 * size;
+                var ly = ox; //(Math.random()*2-1) * 0.1 * size;
+                var oh = (Math.random() * 0.2 + 0.05) * size;
+                var bladeShade = Math.random() * 0.3 + 0.7;
+                clumpX += sx;
+                clumpY += sy;
+                var bladeColor = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
+                addTriangle([clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                addTriangle([clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                clumpX -= sx;
+                clumpY -= sy;
+            }
         }
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, cornerBHeight, by);
-        triangleVertexArray.push(bx, 8, by);
-        for (var j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0] * sideShadow, hexColor[1] * sideShadow, hexColor[2] * sideShadow);
+        if (Math.random() < 1 / 30) {
+            // add a rock
+            var r = 0.1 + Math.random() * 0.2;
+            var dm = Math.random() + 0.3 + r;
+            var da = Math.random();
+            var db = Math.random();
+            var rockX = (dm * wx + da * ax + db * bx) / (dm + da + db);
+            var rockY = (dm * wy + da * ay + db * by) / (dm + da + db);
+            var rockH = (dm * mainHeight + da * cornerAHeight + db * cornerBHeight) / (dm + da + db);
+            for (var s = 0; s < 7; s++) {
+                var h = r;
+                var d = 0.02;
+                addTriangle([rockX, rockH - h, rockY,], [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r], [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r], hexColor.map(function (x) { return x * 0.7 + 0.05; }));
+            }
         }
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, 8, by);
-        triangleVertexArray.push(ax, 8, ay);
-        for (var j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0] * sideShadow, hexColor[1] * sideShadow, hexColor[2] * sideShadow);
-        }
+    };
+    for (var i = 0; i < 6; i++) {
+        _loop_2(i);
     }
 };
 for (var _r = 0, tiles_1 = tiles; _r < tiles_1.length; _r++) {

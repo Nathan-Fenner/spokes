@@ -244,8 +244,6 @@ if (!tryGL) {
     throw "unable to get webGL context";
 }
 
-let triangles = 10000;
-
 let gl = tryGL;
 
 // We're going to make a basic program to start.
@@ -314,7 +312,7 @@ float random( vec3 p )
 void main(void) {
     float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
     float noise = random(floor(15.0 * fragmentPosition));
-    gl_FragColor = vec4(y * fragmentColor - noise * 0.03, 1.0);
+    gl_FragColor = vec4(y * fragmentColor, 1.0);
 }
 `;
 
@@ -483,6 +481,12 @@ function cornerHeightCombine(self: number, hs: number[]): number {
 // The Z component will be 0 for all of them.
 let triangleVertexArray: number[] = [];
 let triangleColorArray: number[] = [];
+
+function addTriangle(c1: Vec3, c2: Vec3, c3: Vec3, color: Vec3) {
+    triangleVertexArray.push(...c1, ...c2, ...c3);
+    triangleColorArray.push(...color, ...color, ...color);
+}
+
 for (let p of tiles) {
     let cs = hexCorners(p);
     let bladeCount = 30 * randomChoose([0, 0, 0, 1, 1/8, 1/8, 1/20]);
@@ -505,6 +509,12 @@ for (let p of tiles) {
         let height = cornerHeightCombine(heightOf(p), hs);
         corners.push({point, height});
     }
+
+    let bladeChance = 1/300;
+    if (Math.random() < 1/30) {
+        bladeChance = 0.7;
+    }
+
     for (let i = 0; i < 6; i++) {
         let {wx, wy} = hexToWorld(p);
         let {wx: ax, wy: ay} = corners[i].point; // cs[i];
@@ -515,33 +525,72 @@ for (let p of tiles) {
         let mainHeight = reheight(heightOf(p));
         let cornerAHeight = reheight(corners[i].height);
         let cornerBHeight = reheight(corners[(i+1)%6].height);
-        triangleVertexArray.push(wx, mainHeight, wy);
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, cornerBHeight, by);
 
-        let hexColor = [0.9, 0.65, 0.35];
+        let hexColor: Vec3 = [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
+
+        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], hexColor);
         let sideShadow = 0.4;
-        let grassColor = [0.1, 0.56, 0.2];
+        let grassColor: Vec3 = [0.3, 0.4, 0.2]
+        grassColor = grassColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        for (let j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0], hexColor[1], hexColor[2]);
+        addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], hexColor.map((x) => x * sideShadow));
+        addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], hexColor.map((x) => x * sideShadow));
+
+        while (Math.random() < bladeChance) {
+            // add a clump
+            let dm = Math.random() + 0.1;
+            let da = Math.random();
+            let db = Math.random();
+            let clumpX = (dm*wx + da*ax + db*bx) / (dm + da + db);
+            let clumpY = (dm*wy + da*ay + db*by) / (dm + da + db);
+            let clumpH = (dm*mainHeight + da*cornerAHeight + db*cornerBHeight) / (dm + da + db);
+
+            let size = 0.5 + Math.random() * 0.3;
+
+            for (let i = 0; i < 5 + Math.random() * 30; i++) {
+                let ox = (Math.random()*2-1) * 0.05 * size;
+                let oy = (Math.random()*2-1) * 0.05 * size;
+                let om = Math.sqrt(ox**2 + oy**2);
+                ox /= om;
+                oy /= om;
+                ox *= 0.05 * size;
+                oy *= 0.05 * size;
+                let sx = (Math.random()*2-1) * 0.05 * size;
+                let sy = (Math.random()*2-1) * 0.05 * size;
+                let lx = -oy; //(Math.random()*2-1) * 0.1 * size;
+                let ly = ox; //(Math.random()*2-1) * 0.1 * size;
+                let oh = (Math.random() * 0.2 + 0.05) * size;
+                let bladeShade = Math.random() * 0.3 + 0.7;
+                clumpX += sx;
+                clumpY += sy;
+                let bladeColor: Vec3 = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
+                addTriangle([clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                addTriangle([clumpX + 3*lx, clumpH - oh*2, clumpY + 3*ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                clumpX -= sx;
+                clumpY -= sy;
+            }
         }
 
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, cornerBHeight, by);
-        triangleVertexArray.push(bx, 8, by);
-
-        for (let j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0]*sideShadow, hexColor[1]*sideShadow, hexColor[2]*sideShadow);
-        }
-
-        triangleVertexArray.push(ax, cornerAHeight, ay);
-        triangleVertexArray.push(bx, 8, by);
-        triangleVertexArray.push(ax, 8, ay);
-
-        for (let j = 0; j < 3; j++) {
-            triangleColorArray.push(hexColor[0]*sideShadow, hexColor[1]*sideShadow, hexColor[2]*sideShadow);
+        if (Math.random() < 1/30) {
+            // add a rock
+            let r = 0.1 + Math.random() * 0.2;
+            let dm = Math.random() + 0.3 + r;
+            let da = Math.random();
+            let db = Math.random();
+            let rockX = (dm*wx + da*ax + db*bx) / (dm + da + db);
+            let rockY = (dm*wy + da*ay + db*by) / (dm + da + db);
+            let rockH = (dm*mainHeight + da*cornerAHeight + db*cornerBHeight) / (dm + da + db);
+            for (let s = 0; s < 7; s++) {
+                let h = r;
+                let d = 0.02;
+                addTriangle(
+                    [rockX, rockH - h, rockY,],
+                    [rockX + Math.cos(s/7*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/7*Math.PI*2)*r],
+                    [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
+                    hexColor.map((x) => x * 0.7 + 0.05),
+                );
+            }
         }
     }
 }
