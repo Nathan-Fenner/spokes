@@ -855,7 +855,7 @@ function loop() {
         0, 0, 1, 0,
         -from[0], -from[1], -from[2], 1,
     ]);
-    gl.drawArrays(gl.TRIANGLES, 0, worldMesh.count());
+    gl.drawArrays(gl.TRIANGLES, 0, worldMesh.count() * 3);
 }
 loop();
 function humanize(variable) {
