@@ -14,7 +14,7 @@ type GenerationParameters = {
 let generationParameters: GenerationParameters = {
     avoiderCount: Math.random() * 200 | 0,
     tileCount: Math.random() * 500 + 750 | 0,
-    smoothness: Math.random()**2 * 100,
+    smoothness: Math.random()**2 * 70 + 10,
 };
 
 // generation parameters (TODO: expose this in the UI)
@@ -266,14 +266,17 @@ uniform mat4 camera;
 
 attribute vec3 vertexPosition;
 attribute vec3 vertexColor;
+attribute vec3 vertexNormal;
 
 varying vec3 fragmentPosition;
 varying vec3 fragmentColor;
+varying vec3 fragmentNormal;
 
 void main(void) {
     gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);
     fragmentPosition = vertexPosition;
     fragmentColor = vertexColor;
+    fragmentNormal = vertexNormal;
 }
 `;
 
@@ -299,9 +302,11 @@ let fragmentShaderSource = `
 precision mediump float;
 
 uniform float time;
+uniform vec3 lightDirection;
 
 varying vec3 fragmentPosition;
 varying vec3 fragmentColor;
+varying vec3 fragmentNormal;
 
 float random( vec3 p )
 {
@@ -312,7 +317,8 @@ float random( vec3 p )
 void main(void) {
     float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
     float noise = random(floor(15.0 * fragmentPosition));
-    gl_FragColor = vec4(y * fragmentColor, 1.0);
+    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;
+    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
 }
 `;
 
@@ -396,12 +402,18 @@ gl.enableVertexAttribArray(vertexPositionAttribute);
 let vertexColorAttribute = gl.getAttribLocation(shaderProgram, "vertexColor");
 gl.enableVertexAttribArray(vertexColorAttribute);
 
+let vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "vertexNormal");
+gl.enableVertexAttribArray(vertexNormalAttribute);
+
 // get the perspective uniform
 let perspectiveUniform = gl.getUniformLocation(shaderProgram, "perspective")!;
 let cameraPositionUniform = gl.getUniformLocation(shaderProgram, "cameraPosition")!;
 let cameraUniform = gl.getUniformLocation(shaderProgram, "camera")!;
 let timeUniform = gl.getUniformLocation(shaderProgram, "time")!;
+let lightingUniform = gl.getUniformLocation(shaderProgram, "lightDirection")!;
 
+
+let light = [2, -2, 2];
 
 let massHeight: {[k: string]: number} = {};
 massHeight[hexKey({hx: 0, hy: 0})] = 2;
@@ -449,6 +461,13 @@ function range(xs: number[]): number {
 function middle(xs: number[]): number {
     return (Math.max(...xs) + Math.min(...xs)) / 2;
 }
+function median(xs: number[]): number {
+    let ys = xs.slice(0).sort();
+    if (ys.length % 2 == 0) {
+        return (ys[ys.length/2-1] + ys[ys.length/2]) / 2;
+    }
+    return ys[ys.length/2 | 0];
+}
 function distinct<A>(xs: A[]): boolean {
     for (let i = 0; i < xs.length; i++) {
         for (let j = 0; j < i; j++) {
@@ -462,7 +481,7 @@ function distinct<A>(xs: A[]): boolean {
 
 function cornerHeightCombine(self: number, hs: number[]): number {
     if (range([self, ...hs]) == 1) {
-        return middle([self, ...hs]);
+        return median([self, ...hs]);
     }
     if (hs.length == 2 && range([self, ...hs]) == 2 && distinct([self, ...hs])) {
         return middle([self, ...hs]);
@@ -479,13 +498,177 @@ function cornerHeightCombine(self: number, hs: number[]): number {
 
 // Here we create a regular JS array to store the coordinates of the triangle's corners.
 // The Z component will be 0 for all of them.
-let triangleVertexArray: number[] = [];
-let triangleColorArray: number[] = [];
 
-function addTriangle(c1: Vec3, c2: Vec3, c3: Vec3, color: Vec3) {
-    triangleVertexArray.push(...c1, ...c2, ...c3);
-    triangleColorArray.push(...color, ...color, ...color);
+type Vec2 = [number, number];
+type Vec3 = [number, number, number];
+type Vec4 = [number, number, number, number];
+type Mat4 = [
+    number, number, number, number,
+    number, number, number, number,
+    number, number, number, number,
+    number, number, number, number
+];
+type VecN = [null, number, Vec2, Vec3, Vec4]; // TODO: more
+type VecLength = 0 | 1 | 2 | 3; // attributes allows
+
+type Vertex = {
+    position: Vec3;
+    color: Vec3;
+    normal: Vec3;
+};
+
+type Triangle = {
+    vertices: [Vertex, Vertex, Vertex];
+};
+
+type BinLevel = {
+    next: {pivot: Vec3, low: BinLevel, high: BinLevel} | null;
+    dimension: 0 | 1 | 2;
+};
+
+function compressPath(path: string): string {
+    return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
 }
+
+class BinTree {
+    levels: BinLevel;
+    constructor() {
+        this.levels = {dimension: 0, next: null};
+    }
+    find(p: Vec3, eps: number): string | null {
+        let signature = "";
+        let roots = [{root: this.levels, path: "_"}];
+        while (roots.length > 0) {
+            let {root, path} = roots.pop()!;
+            let next = root.next;
+            if (!next) {
+                continue; // nothing to do
+            }
+            if (distance(next.pivot, p) < eps) {
+                return compressPath(path);
+            }
+            if (p[root.dimension] < next.pivot[root.dimension] + eps) {
+                roots.push({root: next.low, path: path + "L"});
+            }
+            if (p[root.dimension] > next.pivot[root.dimension] - eps) {
+                roots.push({root: next.high, path: path + "H"});
+            }
+        }
+        return null;
+    }
+    insertInto(p: Vec3, root: BinLevel) {
+        let dimensions: [0, 1, 2] = [0, 1, 2];
+        if (root.next) {
+            if (p[root.dimension] < root.next.pivot[root.dimension]) {
+                this.insertInto(p, root.next.low);
+            } else {
+                this.insertInto(p, root.next.high);
+            }
+        } else {
+            root.next = {
+                pivot: p,
+                low: {dimension: randomChoose(dimensions), next: null},
+                high: {dimension: randomChoose(dimensions), next: null},
+            }
+        }
+    }
+    insertPoints(ps: Vec3[]) {
+        let qs = ps.slice(0);
+        for (let i = 0; i < qs.length; i++) {
+            let j = i + Math.random() * (qs.length - i) | 0
+            let a = qs[i];
+            let b = qs[j];
+            qs[i] = b;
+            qs[j] = a;
+        }
+        for (let p of qs) {
+            this.insertInto(p, this.levels);
+        }
+    }
+}
+
+class Mesh {
+    triangles: Triangle[];
+    constructor() {
+        this.triangles = [];
+    }
+    count() {
+        return this.triangles.length;
+    }
+    addGeneral(vertices: [Vertex, Vertex, Vertex]) {
+        this.triangles.push({vertices});
+    }
+    addSingleColor(positions: [Vec3, Vec3, Vec3], color: Vec3) {
+        // note that orientation matters to determine normal
+        let normal = unit(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
+        this.triangles.push({
+            vertices: [
+                { position: positions[0], color, normal },
+                { position: positions[1], color, normal },
+                { position: positions[2], color, normal },
+            ]
+        });
+    }
+    removeDoubledSurfaces() {
+        const EPS = 0.001;
+        let allPoints: Vec3[] = [];
+        for (let triangle of this.triangles) {
+            allPoints.push(...triangle.vertices.map(x => x.position));
+        }
+        let tree = new BinTree();
+        tree.insertPoints(allPoints);
+        function describeVertex(vertex: Vertex): string {
+            let result = tree.find(vertex.position, EPS);
+            if (result) {
+                return result;
+            }
+            (window as any).blub = tree;
+            (window as any).flub = vertex.position;
+            throw "invalid";
+        }
+        function describe(triangle: Triangle): string {
+            return triangle.vertices.map(describeVertex).sort().join(":");
+        }
+        let triangleCount: {[k: string]: number} = {};
+        for (let triangle of this.triangles) {
+            let description = describe(triangle);
+            if (description in triangleCount) {
+                triangleCount[description]++;
+            } else {
+                triangleCount[description] = 1;
+            }
+        }
+        let newTriangles: Triangle[] = [];
+        for (let triangle of this.triangles) {
+            let description = describe(triangle);
+            if (triangleCount[description] >= 2) {
+                continue;
+            }
+            newTriangles.push(triangle);
+        }
+        this.triangles = newTriangles;
+    }
+    render(): {positions: Float32Array, normals: Float32Array, colors: Float32Array} {
+        let positions: number[] = [];
+        let colors: number[] = [];
+        let normals: number[] = [];
+        for (let triangle of this.triangles) {
+            for (let vertex of triangle.vertices) {
+                positions.push(...vertex.position);
+                colors.push(...vertex.color);
+                normals.push(...vertex.normal);
+            }
+        }
+        return {
+            positions: new Float32Array(positions),
+            colors: new Float32Array(colors),
+            normals: new Float32Array(normals),
+        }
+    }
+}
+
+// TODO: hierarchical meshes?
+let worldMesh = new Mesh();
 
 for (let p of tiles) {
     let cs = hexCorners(p);
@@ -529,13 +712,14 @@ for (let p of tiles) {
         let hexColor: Vec3 = [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], hexColor);
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor);
+
         let sideShadow = 0.4;
         let grassColor: Vec3 = [0.3, 0.4, 0.2]
         grassColor = grassColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], hexColor.map((x) => x * sideShadow));
-        addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], hexColor.map((x) => x * sideShadow));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map((x) => x * sideShadow));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map((x) => x * sideShadow));
 
         while (Math.random() < bladeChance) {
             // add a clump
@@ -558,15 +742,15 @@ for (let p of tiles) {
                 oy *= 0.05 * size;
                 let sx = (Math.random()*2-1) * 0.05 * size;
                 let sy = (Math.random()*2-1) * 0.05 * size;
-                let lx = -oy; //(Math.random()*2-1) * 0.1 * size;
-                let ly = ox; //(Math.random()*2-1) * 0.1 * size;
+                let lx = -oy;
+                let ly = ox;
                 let oh = (Math.random() * 0.2 + 0.05) * size;
                 let bladeShade = Math.random() * 0.3 + 0.7;
                 clumpX += sx;
                 clumpY += sy;
                 let bladeColor: Vec3 = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
-                addTriangle([clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
-                addTriangle([clumpX + 3*lx, clumpH - oh*2, clumpY + 3*ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                worldMesh.addSingleColor([[clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
+                worldMesh.addSingleColor([[clumpX + 3*lx, clumpH - oh*2, clumpY + 3*ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
                 clumpX -= sx;
                 clumpY -= sy;
             }
@@ -584,16 +768,21 @@ for (let p of tiles) {
             for (let s = 0; s < 7; s++) {
                 let h = r;
                 let d = 0.02;
-                addTriangle(
-                    [rockX, rockH - h, rockY,],
-                    [rockX + Math.cos(s/7*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/7*Math.PI*2)*r],
-                    [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
+                worldMesh.addSingleColor(
+                    [
+                        [rockX, rockH - h, rockY,],
+                        [rockX + Math.cos(s/7*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/7*Math.PI*2)*r],
+                        [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
+                    ],
                     hexColor.map((x) => x * 0.7 + 0.05),
                 );
             }
         }
     }
 }
+
+worldMesh.removeDoubledSurfaces();
+let worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending
 // information from the CPU to the GPU (TODO: explain this better).
@@ -611,11 +800,15 @@ gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexBuffer);
 // Now we funnel the data from our array into the currently bound buffer.
 // STATIC_DRAW indicates that we're not going to frequently modify the contents of the buffer.
 // If you're going to do that, use DYNAMIC_DRAW instead. It will be faster.
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triangleVertexArray), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.positions, gl.STATIC_DRAW);
 
 let triangleColorBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triangleColorArray), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.colors, gl.STATIC_DRAW);
+
+let triangleNormalBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.normals, gl.STATIC_DRAW);
 
 // We're so close!
 
@@ -630,14 +823,6 @@ canvas.width = 600; // TODO: explain about CSS here
 canvas.height = 600;
 gl.viewport(0, 0, 600, 600); // TODO: explain what this does
 
-type Vec3 = [number, number, number];
-type Mat4 = [
-    number, number, number, number,
-    number, number, number, number,
-    number, number, number, number,
-    number, number, number, number
-];
-
 function normalizeSet(vec: Vec3) {
     let mag = Math.sqrt(vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2]);
     vec[0] /= mag;
@@ -647,6 +832,24 @@ function normalizeSet(vec: Vec3) {
 
 function cross(u: Vec3, v: Vec3): Vec3 {
     return [u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]];
+}
+function subtract(u: Vec3, v: Vec3): Vec3 {
+    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+}
+function add(u: Vec3, v: Vec3): Vec3 {
+    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+}
+function scale(k: number, v: Vec3): Vec3 {
+    return [k*v[0], k*v[1], k*v[2]];
+}
+function magnitude(v: Vec3): number {
+    return Math.sqrt(v[0]**2 + v[1]**2 + v[2]**2);
+}
+function distance(v: Vec3, u: Vec3): number {
+    return magnitude(subtract(v, u));
+}
+function unit(v: Vec3): Vec3 {
+    return scale(1 / magnitude(v), v);
 }
 
 function scaleSet(u: Vec3, k: number) {
@@ -763,6 +966,9 @@ function loop() {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
     gl.vertexAttribPointer(vertexColorAttribute, 3, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
+    gl.vertexAttribPointer(vertexNormalAttribute, 3, gl.FLOAT, false, 0, 0);
     // The arguments are, in order:
     // * the attribute to modify (vertexPositionAttribute)
     // * the number of items in the array belonging to each vertex (3, it's a 3D point)
@@ -825,6 +1031,7 @@ function loop() {
         right[2], up[2], forward[2], 0,
         0, 0, 0, 1,
     ]);
+    gl.uniform3f(lightingUniform, light[0], light[1], light[2]);
     gl.uniform1f(timeUniform, Date.now() / 1000 % 1000);
     gl.uniformMatrix4fv(cameraPositionUniform, false, [
         1, 0, 0, 0,
@@ -832,7 +1039,7 @@ function loop() {
         0, 0, 1, 0,
         -from[0], -from[1], -from[2], 1,
     ]);
-    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 3);
+    gl.drawArrays(gl.TRIANGLES, 0, worldMesh.count());
 }
 
 loop();

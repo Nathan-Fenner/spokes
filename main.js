@@ -4,7 +4,7 @@ canvas.height = 600;
 var generationParameters = {
     avoiderCount: Math.random() * 200 | 0,
     tileCount: Math.random() * 500 + 750 | 0,
-    smoothness: Math.pow(Math.random(), 2) * 100
+    smoothness: Math.pow(Math.random(), 2) * 70 + 10
 };
 // generation parameters (TODO: expose this in the UI)
 function randomChoose(xs) {
@@ -201,7 +201,7 @@ var gl = tryGL;
 // is called GLSL. It looks something like C, though it's a lot simpler.
 // This is a modern (i.e. ES2016) feature called template literals.
 // It's basically a multiline string.
-var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\nuniform mat4 cameraPosition;\nuniform mat4 camera;\n\nattribute vec3 vertexPosition;\nattribute vec3 vertexColor;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nvoid main(void) {\n    gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n    fragmentPosition = vertexPosition;\n    fragmentColor = vertexColor;\n}\n";
+var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\nuniform mat4 cameraPosition;\nuniform mat4 camera;\n\nattribute vec3 vertexPosition;\nattribute vec3 vertexColor;\nattribute vec3 vertexNormal;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nvoid main(void) {\n    gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n    fragmentPosition = vertexPosition;\n    fragmentColor = vertexColor;\n    fragmentNormal = vertexNormal;\n}\n";
 // An `attribute` is a value that's passed from the CPU (JavaScript)
 // to the GPU (WebGL); in this case, per-vertex.
 // It's declared as a vec3, a vector in 3D space.
@@ -215,7 +215,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    gl_FragColor = vec4(y * fragmentColor, 1.0);\n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -282,11 +282,15 @@ var vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "vertexPositio
 gl.enableVertexAttribArray(vertexPositionAttribute);
 var vertexColorAttribute = gl.getAttribLocation(shaderProgram, "vertexColor");
 gl.enableVertexAttribArray(vertexColorAttribute);
+var vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "vertexNormal");
+gl.enableVertexAttribArray(vertexNormalAttribute);
 // get the perspective uniform
 var perspectiveUniform = gl.getUniformLocation(shaderProgram, "perspective");
 var cameraPositionUniform = gl.getUniformLocation(shaderProgram, "cameraPosition");
 var cameraUniform = gl.getUniformLocation(shaderProgram, "camera");
 var timeUniform = gl.getUniformLocation(shaderProgram, "time");
+var lightingUniform = gl.getUniformLocation(shaderProgram, "lightDirection");
+var light = [2, -2, 2];
 var massHeight = {};
 massHeight[hexKey({ hx: 0, hy: 0 })] = 2;
 function isTile(h) {
@@ -328,6 +332,13 @@ function range(xs) {
 function middle(xs) {
     return (Math.max.apply(Math, xs) + Math.min.apply(Math, xs)) / 2;
 }
+function median(xs) {
+    var ys = xs.slice(0).sort();
+    if (ys.length % 2 == 0) {
+        return (ys[ys.length / 2 - 1] + ys[ys.length / 2]) / 2;
+    }
+    return ys[ys.length / 2 | 0];
+}
 function distinct(xs) {
     for (var i = 0; i < xs.length; i++) {
         for (var j = 0; j < i; j++) {
@@ -340,7 +351,7 @@ function distinct(xs) {
 }
 function cornerHeightCombine(self, hs) {
     if (range([self].concat(hs)) == 1) {
-        return middle([self].concat(hs));
+        return median([self].concat(hs));
     }
     if (hs.length == 2 && range([self].concat(hs)) == 2 && distinct([self].concat(hs))) {
         return middle([self].concat(hs));
@@ -354,14 +365,155 @@ function cornerHeightCombine(self, hs) {
     }
     return self;
 }
-// Here we create a regular JS array to store the coordinates of the triangle's corners.
-// The Z component will be 0 for all of them.
-var triangleVertexArray = [];
-var triangleColorArray = [];
-function addTriangle(c1, c2, c3, color) {
-    triangleVertexArray.push.apply(triangleVertexArray, c1.concat(c2, c3));
-    triangleColorArray.push.apply(triangleColorArray, color.concat(color, color));
+function compressPath(path) {
+    return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
 }
+var BinTree = (function () {
+    function BinTree() {
+        this.levels = { dimension: 0, next: null };
+    }
+    BinTree.prototype.find = function (p, eps) {
+        var signature = "";
+        var roots = [{ root: this.levels, path: "_" }];
+        while (roots.length > 0) {
+            var _a = roots.pop(), root = _a.root, path = _a.path;
+            var next = root.next;
+            if (!next) {
+                continue; // nothing to do
+            }
+            if (distance(next.pivot, p) < eps) {
+                return compressPath(path);
+            }
+            if (p[root.dimension] < next.pivot[root.dimension] + eps) {
+                roots.push({ root: next.low, path: path + "L" });
+            }
+            if (p[root.dimension] > next.pivot[root.dimension] - eps) {
+                roots.push({ root: next.high, path: path + "H" });
+            }
+        }
+        return null;
+    };
+    BinTree.prototype.insertInto = function (p, root) {
+        var dimensions = [0, 1, 2];
+        if (root.next) {
+            if (p[root.dimension] < root.next.pivot[root.dimension]) {
+                this.insertInto(p, root.next.low);
+            }
+            else {
+                this.insertInto(p, root.next.high);
+            }
+        }
+        else {
+            root.next = {
+                pivot: p,
+                low: { dimension: randomChoose(dimensions), next: null },
+                high: { dimension: randomChoose(dimensions), next: null }
+            };
+        }
+    };
+    BinTree.prototype.insertPoints = function (ps) {
+        var qs = ps.slice(0);
+        for (var i = 0; i < qs.length; i++) {
+            var j = i + Math.random() * (qs.length - i) | 0;
+            var a = qs[i];
+            var b = qs[j];
+            qs[i] = b;
+            qs[j] = a;
+        }
+        for (var _i = 0, qs_1 = qs; _i < qs_1.length; _i++) {
+            var p = qs_1[_i];
+            this.insertInto(p, this.levels);
+        }
+    };
+    return BinTree;
+}());
+var Mesh = (function () {
+    function Mesh() {
+        this.triangles = [];
+    }
+    Mesh.prototype.count = function () {
+        return this.triangles.length;
+    };
+    Mesh.prototype.addGeneral = function (vertices) {
+        this.triangles.push({ vertices: vertices });
+    };
+    Mesh.prototype.addSingleColor = function (positions, color) {
+        // note that orientation matters to determine normal
+        var normal = unit(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
+        this.triangles.push({
+            vertices: [
+                { position: positions[0], color: color, normal: normal },
+                { position: positions[1], color: color, normal: normal },
+                { position: positions[2], color: color, normal: normal },
+            ]
+        });
+    };
+    Mesh.prototype.removeDoubledSurfaces = function () {
+        var EPS = 0.001;
+        var allPoints = [];
+        for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
+            var triangle = _a[_i];
+            allPoints.push.apply(allPoints, triangle.vertices.map(function (x) { return x.position; }));
+        }
+        var tree = new BinTree();
+        tree.insertPoints(allPoints);
+        function describeVertex(vertex) {
+            var result = tree.find(vertex.position, EPS);
+            if (result) {
+                return result;
+            }
+            window.blub = tree;
+            window.flub = vertex.position;
+            throw "invalid";
+        }
+        function describe(triangle) {
+            return triangle.vertices.map(describeVertex).sort().join(":");
+        }
+        var triangleCount = {};
+        for (var _b = 0, _c = this.triangles; _b < _c.length; _b++) {
+            var triangle = _c[_b];
+            var description = describe(triangle);
+            if (description in triangleCount) {
+                triangleCount[description]++;
+            }
+            else {
+                triangleCount[description] = 1;
+            }
+        }
+        var newTriangles = [];
+        for (var _d = 0, _e = this.triangles; _d < _e.length; _d++) {
+            var triangle = _e[_d];
+            var description = describe(triangle);
+            if (triangleCount[description] >= 2) {
+                continue;
+            }
+            newTriangles.push(triangle);
+        }
+        this.triangles = newTriangles;
+    };
+    Mesh.prototype.render = function () {
+        var positions = [];
+        var colors = [];
+        var normals = [];
+        for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
+            var triangle = _a[_i];
+            for (var _b = 0, _c = triangle.vertices; _b < _c.length; _b++) {
+                var vertex = _c[_b];
+                positions.push.apply(positions, vertex.position);
+                colors.push.apply(colors, vertex.color);
+                normals.push.apply(normals, vertex.normal);
+            }
+        }
+        return {
+            positions: new Float32Array(positions),
+            colors: new Float32Array(colors),
+            normals: new Float32Array(normals)
+        };
+    };
+    return Mesh;
+}());
+// TODO: hierarchical meshes?
+var worldMesh = new Mesh();
 var _loop_1 = function (p) {
     var cs = hexCorners(p);
     var bladeCount = 30 * randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
@@ -398,12 +550,12 @@ var _loop_1 = function (p) {
         var cornerBHeight = reheight(corners[(i + 1) % 6].height);
         var hexColor = [0.9, 0.65, 0.35];
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], hexColor);
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor);
         var sideShadow = 0.4;
         var grassColor = [0.3, 0.4, 0.2];
         grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], hexColor.map(function (x) { return x * sideShadow; }));
-        addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], hexColor.map(function (x) { return x * sideShadow; }));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map(function (x) { return x * sideShadow; }));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map(function (x) { return x * sideShadow; }));
         while (Math.random() < bladeChance) {
             // add a clump
             var dm = Math.random() + 0.1;
@@ -423,15 +575,15 @@ var _loop_1 = function (p) {
                 oy *= 0.05 * size;
                 var sx = (Math.random() * 2 - 1) * 0.05 * size;
                 var sy = (Math.random() * 2 - 1) * 0.05 * size;
-                var lx = -oy; //(Math.random()*2-1) * 0.1 * size;
-                var ly = ox; //(Math.random()*2-1) * 0.1 * size;
+                var lx = -oy;
+                var ly = ox;
                 var oh = (Math.random() * 0.2 + 0.05) * size;
                 var bladeShade = Math.random() * 0.3 + 0.7;
                 clumpX += sx;
                 clumpY += sy;
                 var bladeColor = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
-                addTriangle([clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
-                addTriangle([clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], bladeColor);
+                worldMesh.addSingleColor([[clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
+                worldMesh.addSingleColor([[clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
                 clumpX -= sx;
                 clumpY -= sy;
             }
@@ -448,7 +600,11 @@ var _loop_1 = function (p) {
             for (var s = 0; s < 7; s++) {
                 var h = r;
                 var d = 0.02;
-                addTriangle([rockX, rockH - h, rockY,], [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r], [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r], hexColor.map(function (x) { return x * 0.7 + 0.05; }));
+                worldMesh.addSingleColor([
+                    [rockX, rockH - h, rockY,],
+                    [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r],
+                    [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r],
+                ], hexColor.map(function (x) { return x * 0.7 + 0.05; }));
             }
         }
     };
@@ -460,6 +616,8 @@ for (var _r = 0, tiles_1 = tiles; _r < tiles_1.length; _r++) {
     var p = tiles_1[_r];
     _loop_1(p);
 }
+worldMesh.removeDoubledSurfaces();
+var worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending
 // information from the CPU to the GPU (TODO: explain this better).
@@ -475,10 +633,13 @@ gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexBuffer);
 // Now we funnel the data from our array into the currently bound buffer.
 // STATIC_DRAW indicates that we're not going to frequently modify the contents of the buffer.
 // If you're going to do that, use DYNAMIC_DRAW instead. It will be faster.
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triangleVertexArray), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.positions, gl.STATIC_DRAW);
 var triangleColorBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triangleColorArray), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.colors, gl.STATIC_DRAW);
+var triangleNormalBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, worldRendered.normals, gl.STATIC_DRAW);
 // We're so close!
 // Let's get a black background!
 gl.clearColor(0, 0, 0, 1);
@@ -496,6 +657,24 @@ function normalizeSet(vec) {
 }
 function cross(u, v) {
     return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+}
+function subtract(u, v) {
+    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+}
+function add(u, v) {
+    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+}
+function scale(k, v) {
+    return [k * v[0], k * v[1], k * v[2]];
+}
+function magnitude(v) {
+    return Math.sqrt(Math.pow(v[0], 2) + Math.pow(v[1], 2) + Math.pow(v[2], 2));
+}
+function distance(v, u) {
+    return magnitude(subtract(v, u));
+}
+function unit(v) {
+    return scale(1 / magnitude(v), v);
 }
 function scaleSet(u, k) {
     u[0] *= k;
@@ -608,6 +787,8 @@ function loop() {
     gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
     gl.vertexAttribPointer(vertexColorAttribute, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
+    gl.vertexAttribPointer(vertexNormalAttribute, 3, gl.FLOAT, false, 0, 0);
     // The arguments are, in order:
     // * the attribute to modify (vertexPositionAttribute)
     // * the number of items in the array belonging to each vertex (3, it's a 3D point)
@@ -666,6 +847,7 @@ function loop() {
         right[2], up[2], forward[2], 0,
         0, 0, 0, 1,
     ]);
+    gl.uniform3f(lightingUniform, light[0], light[1], light[2]);
     gl.uniform1f(timeUniform, Date.now() / 1000 % 1000);
     gl.uniformMatrix4fv(cameraPositionUniform, false, [
         1, 0, 0, 0,
@@ -673,7 +855,7 @@ function loop() {
         0, 0, 1, 0,
         -from[0], -from[1], -from[2], 1,
     ]);
-    gl.drawArrays(gl.TRIANGLES, 0, triangleVertexArray.length / 3);
+    gl.drawArrays(gl.TRIANGLES, 0, worldMesh.count());
 }
 loop();
 function humanize(variable) {
