@@ -215,7 +215,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\nfloat smoothNoise( vec2 p ) {\n    vec3 f = vec3(floor(p), 1.0);\n    float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n    float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n    return mix( f0, f1, fract(p.y) );\n}\nfloat cloudNoise( vec2 x, float f, float a ) {\n    float s = 0.0;\n    for (int i = 0; i < 5; i++) {\n        vec2 arg = x * pow(f, float(i));\n        s += smoothNoise(arg) * pow(a, float(i));\n    }\n    return s * (1.0 - a);\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n    float originalHeight = fragmentPosition.y * -4.0;\n    float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2) {\n        gl_FragColor.rgb *= 0.75;\n    }\n    \n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -324,6 +324,34 @@ var tiles = [];
 for (var _q = 0, mass_6 = mass; _q < mass_6.length; _q++) {
     var p = mass_6[_q];
     tiles.push(p);
+}
+// Now, we smooth the result to eliminate areas of varying height with no strategic value.
+for (var i = 0; i < 10; i++) {
+    var _loop_1 = function (j) {
+        var tile = tiles[j];
+        var h = heightOf(tile);
+        var forbid = [];
+        var neighbor = [];
+        for (var _i = 0, _a = hexNeighbors(tile); _i < _a.length; _i++) {
+            var n = _a[_i];
+            if (isTile(n) && Math.abs(heightOf(n) - h) <= 2) {
+                neighbor.push(heightOf(n));
+            }
+        }
+        var countH0 = neighbor.filter(function (x) { return x == h; }).length;
+        var countHU = neighbor.filter(function (x) { return x == h + 1; }).length;
+        var countHD = neighbor.filter(function (x) { return x == h - 1; }).length;
+        // this may create new connections, but it won't destroy existing ones
+        if (neighbor.indexOf(h + 1) < 0 && countHD > countH0) {
+            massHeight[hexKey(tile)] = h - 1;
+        }
+        if (neighbor.indexOf(h - 1) < 0 && countHU > countH0) {
+            massHeight[hexKey(tile)] = h + 1;
+        }
+    };
+    for (var j = 0; j < tiles.length; j++) {
+        _loop_1(j);
+    }
 }
 // Now, let's create the vertices for our triangle, and send them to the GPU.
 function range(xs) {
@@ -549,7 +577,7 @@ var Mesh = (function () {
             normals: new Float32Array(normals)
         };
     };
-    Mesh.prototype.smoothAttribute = function (maxAngle, group, attribute, eps) {
+    Mesh.prototype.smoothAttribute = function (group, attribute, eps) {
         var pointMap = {};
         var hash = function (x) { return Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps); };
         for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
@@ -581,11 +609,7 @@ var Mesh = (function () {
             for (var _k = 0, _l = triangle.vertices; _k < _l.length; _k++) {
                 var vertex = _l[_k];
                 var otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
-                var nearbyAttributes = otherAttributes; // otherAttributes.filter(
-                //(other) => dot(other, vertex.normal) > maxAngle
-                //);
-                var combined = attributeCombiner[attribute](nearbyAttributes);
-                // let combined: attributeCombiner[attribute](otherAttributes);
+                var combined = attributeCombiner[attribute](otherAttributes);
                 vertex[attribute] = combined;
                 // nearbyNormals[1 % nearbyNormals.length];
                 // unit(nearbyNormals.reduce(add, [0, 0, 0]));
@@ -596,7 +620,7 @@ var Mesh = (function () {
 }());
 // TODO: hierarchical meshes?
 var worldMesh = new Mesh();
-var _loop_1 = function (p) {
+var _loop_2 = function (p) {
     var cs = hexCorners(p);
     var bladeCount = 30 * randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
     var corners = [];
@@ -622,7 +646,7 @@ var _loop_1 = function (p) {
     if (Math.random() < 1 / 30) {
         bladeChance = 0.7;
     }
-    var _loop_2 = function (i) {
+    var _loop_3 = function (i) {
         var _a = hexToWorld(p), wx = _a.wx, wy = _a.wy;
         var _b = corners[i].point, ax = _b.wx, ay = _b.wy; // cs[i];
         var _c = corners[(i + 1) % 6].point, bx = _c.wx, by = _c.wy;
@@ -632,7 +656,7 @@ var _loop_1 = function (p) {
         var cornerBHeight = reheight(corners[(i + 1) % 6].height);
         var hexColor = [0.9, 0.65, 0.35];
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface-" + heightOf(p));
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
         var sideShadow = 0.4;
         var grassColor = [0.3, 0.4, 0.2];
         grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
@@ -691,20 +715,17 @@ var _loop_1 = function (p) {
         }
     };
     for (var i = 0; i < 6; i++) {
-        _loop_2(i);
+        _loop_3(i);
     }
 };
 for (var _r = 0, tiles_1 = tiles; _r < tiles_1.length; _r++) {
     var p = tiles_1[_r];
-    _loop_1(p);
+    _loop_2(p);
 }
 worldMesh.removeDoubledSurfaces();
-for (var i = 0; i < 10; i++) {
-    worldMesh.smoothAttribute(-10, "surface-" + i, "color", 0.01);
-    worldMesh.smoothAttribute(0, "surface-" + i, "normal", 0.01);
-}
-worldMesh.smoothAttribute(-10, "rock", "color", 0.01);
-worldMesh.smoothAttribute(0, "rock", "normal", 0.01);
+worldMesh.smoothAttribute("surface", "color", 0.01);
+worldMesh.smoothAttribute("surface", "normal", 0.01);
+worldMesh.smoothAttribute("rock", "normal", 0.1);
 var worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending

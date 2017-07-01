@@ -313,12 +313,32 @@ float random( vec3 p )
     vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );
     return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );
 }
+float smoothNoise( vec2 p ) {
+    vec3 f = vec3(floor(p), 1.0);
+    float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );
+    float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );
+    return mix( f0, f1, fract(p.y) );
+}
+float cloudNoise( vec2 x, float f, float a ) {
+    float s = 0.0;
+    for (int i = 0; i < 5; i++) {
+        vec2 arg = x * pow(f, float(i));
+        s += smoothNoise(arg) * pow(a, float(i));
+    }
+    return s * (1.0 - a);
+}
 
 void main(void) {
     float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
     float noise = random(floor(15.0 * fragmentPosition));
     float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;
     gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
+    float originalHeight = fragmentPosition.y * -4.0;
+    float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);
+    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2) {
+        gl_FragColor.rgb *= 0.75;
+    }
+    
 }
 `;
 
@@ -453,6 +473,30 @@ for (let p of mass) {
     tiles.push(p as HexTile);
 }
 
+// Now, we smooth the result to eliminate areas of varying height with no strategic value.
+for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < tiles.length; j++) {
+        let tile = tiles[j];
+        let h = heightOf(tile);
+        let forbid = [];
+        let neighbor = [];
+        for (let n of hexNeighbors(tile)) {
+            if (isTile(n) && Math.abs(heightOf(n) - h) <= 2) {
+                neighbor.push(heightOf(n));
+            }
+        }
+        let countH0 = neighbor.filter((x) => x == h).length;
+        let countHU = neighbor.filter((x) => x == h+1).length;
+        let countHD = neighbor.filter((x) => x == h-1).length;
+        // this may create new connections, but it won't destroy existing ones
+        if (neighbor.indexOf(h+1) < 0 && countHD > countH0) {
+            massHeight[hexKey(tile)] = h-1;
+        }
+        if (neighbor.indexOf(h-1) < 0 && countHU > countH0) {
+            massHeight[hexKey(tile)] = h+1;
+        }
+    }
+}
 // Now, let's create the vertices for our triangle, and send them to the GPU.
 
 function range(xs: number[]): number {
@@ -709,7 +753,7 @@ class Mesh {
             normals: new Float32Array(normals),
         }
     }
-    smoothAttribute(maxAngle: number, group: string, attribute: "normal" | "color", eps: number) {
+    smoothAttribute(group: string, attribute: "normal" | "color", eps: number) {
         let pointMap: {[hash: string]: {[g: string]: Vec3[]}} = {};
         let hash = (x: Vec3) => Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps);
         for (let triangle of this.triangles) {
@@ -735,11 +779,7 @@ class Mesh {
             }
             for (let vertex of triangle.vertices) {
                 let otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
-                let nearbyAttributes = otherAttributes; // otherAttributes.filter(
-                    //(other) => dot(other, vertex.normal) > maxAngle
-                //);
-                let combined = attributeCombiner[attribute](nearbyAttributes);
-                // let combined: attributeCombiner[attribute](otherAttributes);
+                let combined = attributeCombiner[attribute](otherAttributes);
                 vertex[attribute] = combined;
                 // nearbyNormals[1 % nearbyNormals.length];
                 // unit(nearbyNormals.reduce(add, [0, 0, 0]));
@@ -793,7 +833,7 @@ for (let p of tiles) {
         let hexColor: Vec3 = [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface-" + heightOf(p));
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = [0.3, 0.4, 0.2]
@@ -864,12 +904,9 @@ for (let p of tiles) {
 }
 
 worldMesh.removeDoubledSurfaces();
-for (let i = 0; i < 10; i++) {
-    worldMesh.smoothAttribute(-10, "surface-" + i, "color", 0.01);
-    worldMesh.smoothAttribute(0, "surface-" + i, "normal", 0.01);
-}
-worldMesh.smoothAttribute(-10, "rock", "color", 0.01);
-worldMesh.smoothAttribute(0, "rock", "normal", 0.01);
+    worldMesh.smoothAttribute("surface", "color", 0.01);
+    worldMesh.smoothAttribute("surface", "normal", 0.01);
+worldMesh.smoothAttribute("rock", "normal", 0.1);
 let worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending
