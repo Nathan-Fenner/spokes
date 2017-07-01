@@ -511,6 +511,37 @@ type Mat4 = [
 type VecN = [null, number, Vec2, Vec3, Vec4]; // TODO: more
 type VecLength = 0 | 1 | 2 | 3; // attributes allows
 
+
+function cross(u: Vec3, v: Vec3): Vec3 {
+    return [u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]];
+}
+function subtract(u: Vec3, v: Vec3): Vec3 {
+    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+}
+function add(u: Vec3, v: Vec3): Vec3 {
+    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+}
+function scale(k: number, v: Vec3): Vec3 {
+    return [k*v[0], k*v[1], k*v[2]];
+}
+function dot(a: Vec3, b: Vec3): number {
+    let s = 0;
+    s += a[0] * b[0];
+    s += a[1] * b[1];
+    s += a[2] * b[2];
+    return s;
+}
+function magnitude(v: Vec3): number {
+    return Math.sqrt(v[0]**2 + v[1]**2 + v[2]**2);
+}
+function distance(v: Vec3, u: Vec3): number {
+    return magnitude(subtract(v, u));
+}
+function unit(v: Vec3): Vec3 {
+    return scale(1 / magnitude(v), v);
+}
+
+
 type Vertex = {
     position: Vec3;
     color: Vec3;
@@ -519,10 +550,11 @@ type Vertex = {
 
 type Triangle = {
     vertices: [Vertex, Vertex, Vertex];
+    smoothingGroup?: string;
 };
 
-type BinLevel = {
-    next: {pivot: Vec3, low: BinLevel, high: BinLevel} | null;
+type PointSetBranch<T> = {
+    next: {pivot: Vec3, value: T, low: PointSetBranch<T>, high: PointSetBranch<T>} | null;
     dimension: 0 | 1 | 2;
 };
 
@@ -530,12 +562,12 @@ function compressPath(path: string): string {
     return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
 }
 
-class BinTree {
-    levels: BinLevel;
+class PointSet<T> {
+    levels: PointSetBranch<T>;
     constructor() {
         this.levels = {dimension: 0, next: null};
     }
-    find(p: Vec3, eps: number): string | null {
+    find(p: Vec3, eps: number): {path: string, value: T} | null {
         let signature = "";
         let roots = [{root: this.levels, path: "_"}];
         while (roots.length > 0) {
@@ -545,7 +577,7 @@ class BinTree {
                 continue; // nothing to do
             }
             if (distance(next.pivot, p) < eps) {
-                return compressPath(path);
+                return {path: compressPath(path), value: next.value};
             }
             if (p[root.dimension] < next.pivot[root.dimension] + eps) {
                 roots.push({root: next.low, path: path + "L"});
@@ -556,23 +588,27 @@ class BinTree {
         }
         return null;
     }
-    insertInto(p: Vec3, root: BinLevel) {
+    insertInto(p: Vec3, root: PointSetBranch<T>, v: T, eps: number) {
         let dimensions: [0, 1, 2] = [0, 1, 2];
         if (root.next) {
+            if (distance(p, root.next.pivot) < eps) {
+                throw "bad behavior: do not insert point with nearby neighbor";
+            }
             if (p[root.dimension] < root.next.pivot[root.dimension]) {
-                this.insertInto(p, root.next.low);
+                this.insertInto(p, root.next.low, v, eps);
             } else {
-                this.insertInto(p, root.next.high);
+                this.insertInto(p, root.next.high, v, eps);
             }
         } else {
             root.next = {
                 pivot: p,
+                value: v,
                 low: {dimension: randomChoose(dimensions), next: null},
                 high: {dimension: randomChoose(dimensions), next: null},
             }
         }
     }
-    insertPoints(ps: Vec3[]) {
+    insertPoints(ps: {p: Vec3, v: T}[], eps: number) {
         let qs = ps.slice(0);
         for (let i = 0; i < qs.length; i++) {
             let j = i + Math.random() * (qs.length - i) | 0
@@ -581,11 +617,18 @@ class BinTree {
             qs[i] = b;
             qs[j] = a;
         }
-        for (let p of qs) {
-            this.insertInto(p, this.levels);
+        for (let {p, v} of qs) {
+            if (!this.find(p, eps)) {
+                this.insertInto(p, this.levels, v, eps);
+            }
         }
     }
 }
+
+let attributeCombiner = {
+    normal: (list: Vec3[]): Vec3 => unit(list.reduce(add, [0, 0, 0])),
+    color: (list: Vec3[]): Vec3 => scale(1 / list.length, list.reduce(add, [0, 0, 0])),
+};
 
 class Mesh {
     triangles: Triangle[];
@@ -598,7 +641,7 @@ class Mesh {
     addGeneral(vertices: [Vertex, Vertex, Vertex]) {
         this.triangles.push({vertices});
     }
-    addSingleColor(positions: [Vec3, Vec3, Vec3], color: Vec3) {
+    addSingleColor(positions: [Vec3, Vec3, Vec3], color: Vec3, smoothingGroup?: string) {
         // note that orientation matters to determine normal
         let normal = unit(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
         this.triangles.push({
@@ -606,21 +649,22 @@ class Mesh {
                 { position: positions[0], color, normal },
                 { position: positions[1], color, normal },
                 { position: positions[2], color, normal },
-            ]
+            ],
+            smoothingGroup,
         });
     }
     removeDoubledSurfaces() {
         const EPS = 0.001;
-        let allPoints: Vec3[] = [];
+        let allPoints: {p: Vec3, v: null}[] = [];
         for (let triangle of this.triangles) {
-            allPoints.push(...triangle.vertices.map(x => x.position));
+            allPoints.push(...triangle.vertices.map((x) => ({p: x.position, v: null})));
         }
-        let tree = new BinTree();
-        tree.insertPoints(allPoints);
+        let tree = new PointSet<null>();
+        tree.insertPoints(allPoints, EPS);
         function describeVertex(vertex: Vertex): string {
             let result = tree.find(vertex.position, EPS);
             if (result) {
-                return result;
+                return result.path;
             }
             (window as any).blub = tree;
             (window as any).flub = vertex.position;
@@ -663,6 +707,43 @@ class Mesh {
             positions: new Float32Array(positions),
             colors: new Float32Array(colors),
             normals: new Float32Array(normals),
+        }
+    }
+    smoothAttribute(maxAngle: number, group: string, attribute: "normal" | "color", eps: number) {
+        let pointMap: {[hash: string]: {[g: string]: Vec3[]}} = {};
+        let hash = (x: Vec3) => Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps);
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                pointMap[hash(vertex.position)] = pointMap[hash(vertex.position)] || [];
+                pointMap[hash(vertex.position)][triangle.smoothingGroup] = [];
+            }
+        }
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                pointMap[hash(vertex.position)][triangle.smoothingGroup].push(vertex[attribute]);
+            }
+        }
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                let otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
+                let nearbyAttributes = otherAttributes; // otherAttributes.filter(
+                    //(other) => dot(other, vertex.normal) > maxAngle
+                //);
+                let combined = attributeCombiner[attribute](nearbyAttributes);
+                // let combined: attributeCombiner[attribute](otherAttributes);
+                vertex[attribute] = combined;
+                // nearbyNormals[1 % nearbyNormals.length];
+                // unit(nearbyNormals.reduce(add, [0, 0, 0]));
+            }
         }
     }
 }
@@ -712,14 +793,14 @@ for (let p of tiles) {
         let hexColor: Vec3 = [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor);
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface-" + heightOf(p));
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = [0.3, 0.4, 0.2]
         grassColor = grassColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map((x) => x * sideShadow));
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map((x) => x * sideShadow));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map((x) => x * sideShadow), "wall");
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map((x) => x * sideShadow), "wall");
 
         while (Math.random() < bladeChance) {
             // add a clump
@@ -775,6 +856,7 @@ for (let p of tiles) {
                         [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
                     ],
                     hexColor.map((x) => x * 0.7 + 0.05),
+                    "rock",
                 );
             }
         }
@@ -782,6 +864,12 @@ for (let p of tiles) {
 }
 
 worldMesh.removeDoubledSurfaces();
+for (let i = 0; i < 10; i++) {
+    worldMesh.smoothAttribute(-10, "surface-" + i, "color", 0.01);
+    worldMesh.smoothAttribute(0, "surface-" + i, "normal", 0.01);
+}
+worldMesh.smoothAttribute(-10, "rock", "color", 0.01);
+worldMesh.smoothAttribute(0, "rock", "normal", 0.01);
 let worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending
@@ -828,28 +916,6 @@ function normalizeSet(vec: Vec3) {
     vec[0] /= mag;
     vec[1] /= mag;
     vec[2] /= mag;
-}
-
-function cross(u: Vec3, v: Vec3): Vec3 {
-    return [u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]];
-}
-function subtract(u: Vec3, v: Vec3): Vec3 {
-    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
-}
-function add(u: Vec3, v: Vec3): Vec3 {
-    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
-}
-function scale(k: number, v: Vec3): Vec3 {
-    return [k*v[0], k*v[1], k*v[2]];
-}
-function magnitude(v: Vec3): number {
-    return Math.sqrt(v[0]**2 + v[1]**2 + v[2]**2);
-}
-function distance(v: Vec3, u: Vec3): number {
-    return magnitude(subtract(v, u));
-}
-function unit(v: Vec3): Vec3 {
-    return scale(1 / magnitude(v), v);
 }
 
 function scaleSet(u: Vec3, k: number) {

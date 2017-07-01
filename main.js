@@ -365,14 +365,42 @@ function cornerHeightCombine(self, hs) {
     }
     return self;
 }
+function cross(u, v) {
+    return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+}
+function subtract(u, v) {
+    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+}
+function add(u, v) {
+    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+}
+function scale(k, v) {
+    return [k * v[0], k * v[1], k * v[2]];
+}
+function dot(a, b) {
+    var s = 0;
+    s += a[0] * b[0];
+    s += a[1] * b[1];
+    s += a[2] * b[2];
+    return s;
+}
+function magnitude(v) {
+    return Math.sqrt(Math.pow(v[0], 2) + Math.pow(v[1], 2) + Math.pow(v[2], 2));
+}
+function distance(v, u) {
+    return magnitude(subtract(v, u));
+}
+function unit(v) {
+    return scale(1 / magnitude(v), v);
+}
 function compressPath(path) {
     return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
 }
-var BinTree = (function () {
-    function BinTree() {
+var PointSet = (function () {
+    function PointSet() {
         this.levels = { dimension: 0, next: null };
     }
-    BinTree.prototype.find = function (p, eps) {
+    PointSet.prototype.find = function (p, eps) {
         var signature = "";
         var roots = [{ root: this.levels, path: "_" }];
         while (roots.length > 0) {
@@ -382,7 +410,7 @@ var BinTree = (function () {
                 continue; // nothing to do
             }
             if (distance(next.pivot, p) < eps) {
-                return compressPath(path);
+                return { path: compressPath(path), value: next.value };
             }
             if (p[root.dimension] < next.pivot[root.dimension] + eps) {
                 roots.push({ root: next.low, path: path + "L" });
@@ -393,25 +421,29 @@ var BinTree = (function () {
         }
         return null;
     };
-    BinTree.prototype.insertInto = function (p, root) {
+    PointSet.prototype.insertInto = function (p, root, v, eps) {
         var dimensions = [0, 1, 2];
         if (root.next) {
+            if (distance(p, root.next.pivot) < eps) {
+                throw "bad behavior: do not insert point with nearby neighbor";
+            }
             if (p[root.dimension] < root.next.pivot[root.dimension]) {
-                this.insertInto(p, root.next.low);
+                this.insertInto(p, root.next.low, v, eps);
             }
             else {
-                this.insertInto(p, root.next.high);
+                this.insertInto(p, root.next.high, v, eps);
             }
         }
         else {
             root.next = {
                 pivot: p,
+                value: v,
                 low: { dimension: randomChoose(dimensions), next: null },
                 high: { dimension: randomChoose(dimensions), next: null }
             };
         }
     };
-    BinTree.prototype.insertPoints = function (ps) {
+    PointSet.prototype.insertPoints = function (ps, eps) {
         var qs = ps.slice(0);
         for (var i = 0; i < qs.length; i++) {
             var j = i + Math.random() * (qs.length - i) | 0;
@@ -421,12 +453,18 @@ var BinTree = (function () {
             qs[j] = a;
         }
         for (var _i = 0, qs_1 = qs; _i < qs_1.length; _i++) {
-            var p = qs_1[_i];
-            this.insertInto(p, this.levels);
+            var _a = qs_1[_i], p = _a.p, v = _a.v;
+            if (!this.find(p, eps)) {
+                this.insertInto(p, this.levels, v, eps);
+            }
         }
     };
-    return BinTree;
+    return PointSet;
 }());
+var attributeCombiner = {
+    normal: function (list) { return unit(list.reduce(add, [0, 0, 0])); },
+    color: function (list) { return scale(1 / list.length, list.reduce(add, [0, 0, 0])); }
+};
 var Mesh = (function () {
     function Mesh() {
         this.triangles = [];
@@ -437,7 +475,7 @@ var Mesh = (function () {
     Mesh.prototype.addGeneral = function (vertices) {
         this.triangles.push({ vertices: vertices });
     };
-    Mesh.prototype.addSingleColor = function (positions, color) {
+    Mesh.prototype.addSingleColor = function (positions, color, smoothingGroup) {
         // note that orientation matters to determine normal
         var normal = unit(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
         this.triangles.push({
@@ -445,7 +483,8 @@ var Mesh = (function () {
                 { position: positions[0], color: color, normal: normal },
                 { position: positions[1], color: color, normal: normal },
                 { position: positions[2], color: color, normal: normal },
-            ]
+            ],
+            smoothingGroup: smoothingGroup
         });
     };
     Mesh.prototype.removeDoubledSurfaces = function () {
@@ -453,14 +492,14 @@ var Mesh = (function () {
         var allPoints = [];
         for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
             var triangle = _a[_i];
-            allPoints.push.apply(allPoints, triangle.vertices.map(function (x) { return x.position; }));
+            allPoints.push.apply(allPoints, triangle.vertices.map(function (x) { return ({ p: x.position, v: null }); }));
         }
-        var tree = new BinTree();
-        tree.insertPoints(allPoints);
+        var tree = new PointSet();
+        tree.insertPoints(allPoints, EPS);
         function describeVertex(vertex) {
             var result = tree.find(vertex.position, EPS);
             if (result) {
-                return result;
+                return result.path;
             }
             window.blub = tree;
             window.flub = vertex.position;
@@ -510,6 +549,49 @@ var Mesh = (function () {
             normals: new Float32Array(normals)
         };
     };
+    Mesh.prototype.smoothAttribute = function (maxAngle, group, attribute, eps) {
+        var pointMap = {};
+        var hash = function (x) { return Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps); };
+        for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
+            var triangle = _a[_i];
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (var _b = 0, _c = triangle.vertices; _b < _c.length; _b++) {
+                var vertex = _c[_b];
+                pointMap[hash(vertex.position)] = pointMap[hash(vertex.position)] || [];
+                pointMap[hash(vertex.position)][triangle.smoothingGroup] = [];
+            }
+        }
+        for (var _d = 0, _e = this.triangles; _d < _e.length; _d++) {
+            var triangle = _e[_d];
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (var _f = 0, _g = triangle.vertices; _f < _g.length; _f++) {
+                var vertex = _g[_f];
+                pointMap[hash(vertex.position)][triangle.smoothingGroup].push(vertex[attribute]);
+            }
+        }
+        for (var _h = 0, _j = this.triangles; _h < _j.length; _h++) {
+            var triangle = _j[_h];
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (var _k = 0, _l = triangle.vertices; _k < _l.length; _k++) {
+                var vertex = _l[_k];
+                var otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
+                var nearbyAttributes = otherAttributes; // otherAttributes.filter(
+                //(other) => dot(other, vertex.normal) > maxAngle
+                //);
+                var combined = attributeCombiner[attribute](nearbyAttributes);
+                // let combined: attributeCombiner[attribute](otherAttributes);
+                vertex[attribute] = combined;
+                // nearbyNormals[1 % nearbyNormals.length];
+                // unit(nearbyNormals.reduce(add, [0, 0, 0]));
+            }
+        }
+    };
     return Mesh;
 }());
 // TODO: hierarchical meshes?
@@ -550,12 +632,12 @@ var _loop_1 = function (p) {
         var cornerBHeight = reheight(corners[(i + 1) % 6].height);
         var hexColor = [0.9, 0.65, 0.35];
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor);
+        worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface-" + heightOf(p));
         var sideShadow = 0.4;
         var grassColor = [0.3, 0.4, 0.2];
         grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map(function (x) { return x * sideShadow; }));
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map(function (x) { return x * sideShadow; }));
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map(function (x) { return x * sideShadow; }), "wall");
+        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map(function (x) { return x * sideShadow; }), "wall");
         while (Math.random() < bladeChance) {
             // add a clump
             var dm = Math.random() + 0.1;
@@ -604,7 +686,7 @@ var _loop_1 = function (p) {
                     [rockX, rockH - h, rockY,],
                     [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r],
                     [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r],
-                ], hexColor.map(function (x) { return x * 0.7 + 0.05; }));
+                ], hexColor.map(function (x) { return x * 0.7 + 0.05; }), "rock");
             }
         }
     };
@@ -617,6 +699,12 @@ for (var _r = 0, tiles_1 = tiles; _r < tiles_1.length; _r++) {
     _loop_1(p);
 }
 worldMesh.removeDoubledSurfaces();
+for (var i = 0; i < 10; i++) {
+    worldMesh.smoothAttribute(-10, "surface-" + i, "color", 0.01);
+    worldMesh.smoothAttribute(0, "surface-" + i, "normal", 0.01);
+}
+worldMesh.smoothAttribute(-10, "rock", "color", 0.01);
+worldMesh.smoothAttribute(0, "rock", "normal", 0.01);
 var worldRendered = worldMesh.render();
 // Now, we take the contents of the JS array and put them into the WebGL buffer.
 // This is relatively slow: the biggest slowness in rendering is often sending
@@ -654,27 +742,6 @@ function normalizeSet(vec) {
     vec[0] /= mag;
     vec[1] /= mag;
     vec[2] /= mag;
-}
-function cross(u, v) {
-    return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-}
-function subtract(u, v) {
-    return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
-}
-function add(u, v) {
-    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
-}
-function scale(k, v) {
-    return [k * v[0], k * v[1], k * v[2]];
-}
-function magnitude(v) {
-    return Math.sqrt(Math.pow(v[0], 2) + Math.pow(v[1], 2) + Math.pow(v[2], 2));
-}
-function distance(v, u) {
-    return magnitude(subtract(v, u));
-}
-function unit(v) {
-    return scale(1 / magnitude(v), v);
 }
 function scaleSet(u, k) {
     u[0] *= k;
