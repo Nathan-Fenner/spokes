@@ -14,7 +14,7 @@ type GenerationParameters = {
 let generationParameters: GenerationParameters = {
     avoiderCount: Math.random() * 200 | 0,
     tileCount: Math.random() * 500 + 750 | 0,
-    smoothness: Math.random()**2 * 70 + 10,
+    smoothness: Math.random()**2 * 60,
 };
 
 // generation parameters (TODO: expose this in the UI)
@@ -335,10 +335,9 @@ void main(void) {
     gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
     float originalHeight = fragmentPosition.y * -4.0;
     float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);
-    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2) {
-        gl_FragColor.rgb *= 0.75;
+    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {
+        // gl_FragColor.rgb *= 0.75;
     }
-    
 }
 `;
 
@@ -562,8 +561,17 @@ function cross(u: Vec3, v: Vec3): Vec3 {
 function subtract(u: Vec3, v: Vec3): Vec3 {
     return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
 }
-function add(u: Vec3, v: Vec3): Vec3 {
-    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+function add(...us: Vec3[]): Vec3 {
+    let sum: Vec3 = [0, 0, 0];
+    for (let u of us) {
+        sum[0] += u[0];
+        sum[1] += u[1];
+        sum[2] += u[2];
+    }
+    return sum;
+}
+function plus(u: Vec3, v: Vec3): Vec3 {
+    return add(u, v);
 }
 function scale(k: number, v: Vec3): Vec3 {
     return [k*v[0], k*v[1], k*v[2]];
@@ -670,8 +678,8 @@ class PointSet<T> {
 }
 
 let attributeCombiner = {
-    normal: (list: Vec3[]): Vec3 => unit(list.reduce(add, [0, 0, 0])),
-    color: (list: Vec3[]): Vec3 => scale(1 / list.length, list.reduce(add, [0, 0, 0])),
+    normal: (list: Vec3[]): Vec3 => unit(list.reduce(plus, [0, 0, 0])),
+    color: (list: Vec3[]): Vec3 => scale(1 / list.length, list.reduce(plus, [0, 0, 0])),
 };
 
 class Mesh {
@@ -830,7 +838,8 @@ for (let p of tiles) {
         let cornerAHeight = reheight(corners[i].height);
         let cornerBHeight = reheight(corners[(i+1)%6].height);
 
-        let hexColor: Vec3 = [0.9, 0.65, 0.35];
+        let hexColor: Vec3 = [0.4, 0.6, 0.25];
+        // dirt: [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
         worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
@@ -839,8 +848,69 @@ for (let p of tiles) {
         let grassColor: Vec3 = [0.3, 0.4, 0.2]
         grassColor = grassColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
 
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map((x) => x * sideShadow), "wall");
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map((x) => x * sideShadow), "wall");
+        let adjacentTile = neighbors[(i+1)%6];
+        if (!isTile(adjacentTile) || heightOf(adjacentTile) < heightOf(p) - 1) {
+            let stoneColor = () => {
+                let bright = 1.25 + Math.random()*0.5;
+                let grey = 0.4;
+                return add(scale(bright*grey, hexColor), scale(1-grey, [1,1,1]));
+            };
+            worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], stoneColor(), "wall");
+            worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], stoneColor(), "wall");
+            for (let j = 0; j < 2; j++) {
+                let wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                let wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
+                let outDir = unit([wallDir[2], 0, -wallDir[0]]);
+                let wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
+                let boxLength = Math.random() * 0.2 + 0.15;
+                let boxStart = Math.random() * (wallLength - boxLength);
+                let boxWidth = Math.random() * 0.1 + 0.05;
+                let boxHeight = Math.random() * 0.1 + 0.025;
+
+                let topA: Vec3 = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                let botA: Vec3 = add([ax, 8, ay], scale(boxStart, wallDir));
+                let up: Vec3 = [0, -1, 0];
+
+                let color = stoneColor();
+
+                function addQuad(a: Vec3, b: Vec3, d: Vec3, draw = color) {
+                    worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
+                    worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
+                }
+
+                // front
+                addQuad(
+                    add(topA, scale(boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(botA, scale(boxWidth/2, outDir)),
+                    scale(boxLength, wallDir),
+                );
+                // side 1
+                addQuad(
+                    add(botA, scale(-boxWidth/2, outDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    scale(boxLength, wallDir),
+                );
+                // side 2
+                addQuad(
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(botA, scale(-boxWidth/2, outDir)),
+                    scale(boxWidth, outDir),
+                );
+                // back
+                addQuad(
+                    add(botA, scale(-boxWidth/2, outDir), scale(boxLength, wallDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    scale(boxWidth, outDir),
+                );
+                // top
+                addQuad(
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    scale(boxWidth, outDir),
+                    grassColor,
+                );
+            }
+        }
 
         while (Math.random() < bladeChance) {
             // add a clump
@@ -866,12 +936,12 @@ for (let p of tiles) {
                 let lx = -oy;
                 let ly = ox;
                 let oh = (Math.random() * 0.2 + 0.05) * size;
-                let bladeShade = Math.random() * 0.3 + 0.7;
+                let bladeShade = Math.random() * 0.3 + 1.6;
                 clumpX += sx;
                 clumpY += sy;
                 let bladeColor: Vec3 = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
                 worldMesh.addSingleColor([[clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
-                worldMesh.addSingleColor([[clumpX + 3*lx, clumpH - oh*2, clumpY + 3*ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
+                worldMesh.addSingleColor([[clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + 3*lx, clumpH - oh*2, clumpY + 3*ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
                 clumpX -= sx;
                 clumpY -= sy;
             }
@@ -879,7 +949,7 @@ for (let p of tiles) {
 
         if (Math.random() < 1/30) {
             // add a rock
-            let r = 0.1 + Math.random() * 0.2;
+            let r = 0.05 + Math.random() * 0.1;
             let dm = Math.random() + 0.3 + r;
             let da = Math.random();
             let db = Math.random();
@@ -895,7 +965,7 @@ for (let p of tiles) {
                         [rockX + Math.cos(s/7*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/7*Math.PI*2)*r],
                         [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
                     ],
-                    hexColor.map((x) => x * 0.7 + 0.05),
+                    hexColor.map((x) => x * 0.3 + 0.6),
                     "rock",
                 );
             }

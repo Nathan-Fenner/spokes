@@ -4,7 +4,7 @@ canvas.height = 600;
 var generationParameters = {
     avoiderCount: Math.random() * 200 | 0,
     tileCount: Math.random() * 500 + 750 | 0,
-    smoothness: Math.pow(Math.random(), 2) * 70 + 10
+    smoothness: Math.pow(Math.random(), 2) * 60
 };
 // generation parameters (TODO: expose this in the UI)
 function randomChoose(xs) {
@@ -215,7 +215,7 @@ var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\
 // We just set the 4th component (called w) to 1.0 for now.
 // Whew!
 // Now let's color the triangle. It'll just be red:
-var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\nfloat smoothNoise( vec2 p ) {\n    vec3 f = vec3(floor(p), 1.0);\n    float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n    float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n    return mix( f0, f1, fract(p.y) );\n}\nfloat cloudNoise( vec2 x, float f, float a ) {\n    float s = 0.0;\n    for (int i = 0; i < 5; i++) {\n        vec2 arg = x * pow(f, float(i));\n        s += smoothNoise(arg) * pow(a, float(i));\n    }\n    return s * (1.0 - a);\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n    float originalHeight = fragmentPosition.y * -4.0;\n    float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2) {\n        gl_FragColor.rgb *= 0.75;\n    }\n    \n}\n";
+var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\nfloat smoothNoise( vec2 p ) {\n    vec3 f = vec3(floor(p), 1.0);\n    float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n    float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n    return mix( f0, f1, fract(p.y) );\n}\nfloat cloudNoise( vec2 x, float f, float a ) {\n    float s = 0.0;\n    for (int i = 0; i < 5; i++) {\n        vec2 arg = x * pow(f, float(i));\n        s += smoothNoise(arg) * pow(a, float(i));\n    }\n    return s * (1.0 - a);\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n    float originalHeight = fragmentPosition.y * -4.0;\n    float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n        // gl_FragColor.rgb *= 0.75;\n    }\n}\n";
 // This is a fragment shader. It colors "fragments", which are usually
 // pixels, at least until you're doing something more complicated.
 // The GPU runs the fragment shader once for each pixel in every
@@ -399,8 +399,22 @@ function cross(u, v) {
 function subtract(u, v) {
     return [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
 }
-function add(u, v) {
-    return [u[0] + v[0], u[1] + v[1], u[2] + v[2]];
+function add() {
+    var us = [];
+    for (var _i = 0; _i < arguments.length; _i++) {
+        us[_i] = arguments[_i];
+    }
+    var sum = [0, 0, 0];
+    for (var _a = 0, us_1 = us; _a < us_1.length; _a++) {
+        var u = us_1[_a];
+        sum[0] += u[0];
+        sum[1] += u[1];
+        sum[2] += u[2];
+    }
+    return sum;
+}
+function plus(u, v) {
+    return add(u, v);
 }
 function scale(k, v) {
     return [k * v[0], k * v[1], k * v[2]];
@@ -490,8 +504,8 @@ var PointSet = (function () {
     return PointSet;
 }());
 var attributeCombiner = {
-    normal: function (list) { return unit(list.reduce(add, [0, 0, 0])); },
-    color: function (list) { return scale(1 / list.length, list.reduce(add, [0, 0, 0])); }
+    normal: function (list) { return unit(list.reduce(plus, [0, 0, 0])); },
+    color: function (list) { return scale(1 / list.length, list.reduce(plus, [0, 0, 0])); }
 };
 var Mesh = (function () {
     function Mesh() {
@@ -654,14 +668,55 @@ var _loop_2 = function (p) {
         var mainHeight = reheight(heightOf(p));
         var cornerAHeight = reheight(corners[i].height);
         var cornerBHeight = reheight(corners[(i + 1) % 6].height);
-        var hexColor = [0.9, 0.65, 0.35];
+        var hexColor = [0.4, 0.6, 0.25];
+        // dirt: [0.9, 0.65, 0.35];
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
         worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
         var sideShadow = 0.4;
         var grassColor = [0.3, 0.4, 0.2];
         grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], hexColor.map(function (x) { return x * sideShadow; }), "wall");
-        worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], hexColor.map(function (x) { return x * sideShadow; }), "wall");
+        var adjacentTile = neighbors[(i + 1) % 6];
+        if (!isTile(adjacentTile) || heightOf(adjacentTile) < heightOf(p) - 1) {
+            var stoneColor = function () {
+                var bright = 1.25 + Math.random() * 0.5;
+                var grey = 0.4;
+                return add(scale(bright * grey, hexColor), scale(1 - grey, [1, 1, 1]));
+            };
+            worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], stoneColor(), "wall");
+            worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], stoneColor(), "wall");
+            var _loop_4 = function (j) {
+                var wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                var wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
+                var outDir = unit([wallDir[2], 0, -wallDir[0]]);
+                var wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
+                var boxLength = Math.random() * 0.2 + 0.15;
+                var boxStart = Math.random() * (wallLength - boxLength);
+                var boxWidth = Math.random() * 0.1 + 0.05;
+                var boxHeight = Math.random() * 0.1 + 0.025;
+                var topA = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                var botA = add([ax, 8, ay], scale(boxStart, wallDir));
+                var up = [0, -1, 0];
+                var color = stoneColor();
+                function addQuad(a, b, d, draw) {
+                    if (draw === void 0) { draw = color; }
+                    worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
+                    worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
+                }
+                // front
+                addQuad(add(topA, scale(boxWidth / 2, outDir), scale(boxHeight, up)), add(botA, scale(boxWidth / 2, outDir)), scale(boxLength, wallDir));
+                // side 1
+                addQuad(add(botA, scale(-boxWidth / 2, outDir)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), scale(boxLength, wallDir));
+                // side 2
+                addQuad(add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), add(botA, scale(-boxWidth / 2, outDir)), scale(boxWidth, outDir));
+                // back
+                addQuad(add(botA, scale(-boxWidth / 2, outDir), scale(boxLength, wallDir)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)), scale(boxWidth, outDir));
+                // top
+                addQuad(add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)), scale(boxWidth, outDir), grassColor);
+            };
+            for (var j = 0; j < 2; j++) {
+                _loop_4(j);
+            }
+        }
         while (Math.random() < bladeChance) {
             // add a clump
             var dm = Math.random() + 0.1;
@@ -684,19 +739,19 @@ var _loop_2 = function (p) {
                 var lx = -oy;
                 var ly = ox;
                 var oh = (Math.random() * 0.2 + 0.05) * size;
-                var bladeShade = Math.random() * 0.3 + 0.7;
+                var bladeShade = Math.random() * 0.3 + 1.6;
                 clumpX += sx;
                 clumpY += sy;
                 var bladeColor = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
                 worldMesh.addSingleColor([[clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
-                worldMesh.addSingleColor([[clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
+                worldMesh.addSingleColor([[clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
                 clumpX -= sx;
                 clumpY -= sy;
             }
         }
         if (Math.random() < 1 / 30) {
             // add a rock
-            var r = 0.1 + Math.random() * 0.2;
+            var r = 0.05 + Math.random() * 0.1;
             var dm = Math.random() + 0.3 + r;
             var da = Math.random();
             var db = Math.random();
@@ -710,7 +765,7 @@ var _loop_2 = function (p) {
                     [rockX, rockH - h, rockY,],
                     [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r],
                     [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r],
-                ], hexColor.map(function (x) { return x * 0.7 + 0.05; }), "rock");
+                ], hexColor.map(function (x) { return x * 0.3 + 0.6; }), "rock");
             }
         }
     };
