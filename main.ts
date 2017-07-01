@@ -845,13 +845,14 @@ for (let p of tiles) {
         worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
 
         let sideShadow = 0.4;
-        let grassColor: Vec3 = [0.3, 0.4, 0.2]
-        grassColor = grassColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
+        let grassColor: Vec3 = hexColor; //  [0.3, 0.4, 0.2]
+        grassColor = grassColor.map((x) => Math.max(0, x * 0.7 - 0.05));
 
         let adjacentTile = neighbors[(i+1)%6];
         if (!isTile(adjacentTile) || heightOf(adjacentTile) < heightOf(p) - 1) {
-            let stoneColor = () => {
+            let stoneColor = (light = 1) => {
                 let bright = 1.25 + Math.random()*0.5;
+                bright *= light;
                 let grey = 0.4;
                 return add(scale(bright*grey, hexColor), scale(1-grey, [1,1,1]));
             };
@@ -865,7 +866,7 @@ for (let p of tiles) {
                 let boxLength = Math.random() * 0.2 + 0.15;
                 let boxStart = Math.random() * (wallLength - boxLength);
                 let boxWidth = Math.random() * 0.1 + 0.05;
-                let boxHeight = Math.random() * 0.1 + 0.025;
+                let boxHeight = Math.random() * 0.05 + 0.01;
 
                 let topA: Vec3 = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
                 let botA: Vec3 = add([ax, 8, ay], scale(boxStart, wallDir));
@@ -873,10 +874,10 @@ for (let p of tiles) {
 
                 let color = stoneColor();
 
-                function addQuad(a: Vec3, b: Vec3, d: Vec3, draw = color) {
+                let addQuad = (a: Vec3, b: Vec3, d: Vec3, draw = color) => {
                     worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
                     worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
-                }
+                };
 
                 // front
                 addQuad(
@@ -910,6 +911,60 @@ for (let p of tiles) {
                     grassColor,
                 );
             }
+
+            // TODO: only if the height difference is large enough
+            for (let j = 0; j < 2; j++) {
+                let wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                let wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
+                let outDir = unit([wallDir[2], 0, -wallDir[0]]);
+                let wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
+                let boxLength = Math.random() * 0.2 + 0.25;
+                let boxStart = Math.random() * (wallLength - boxLength);
+                let boxWidth = Math.random() * 0.2 + 0.2;
+                let boxHeight = -Math.random() * 1 - 0.15;
+
+                let topA: Vec3 = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                let botA: Vec3 = add([ax, 8, ay], scale(boxStart, wallDir));
+                let up: Vec3 = [0, -1, 0];
+
+                let color = stoneColor(0.75);
+
+                let addQuad = (a: Vec3, b: Vec3, d: Vec3, draw = color) => {
+                    worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
+                    worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
+                }
+
+                // front
+                addQuad(
+                    add(topA, scale(boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(botA, scale(boxWidth/2, outDir)),
+                    scale(boxLength, wallDir),
+                );
+                // side 1
+                addQuad(
+                    add(botA, scale(-boxWidth/2, outDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    scale(boxLength, wallDir),
+                );
+                // side 2
+                addQuad(
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(botA, scale(-boxWidth/2, outDir)),
+                    scale(boxWidth, outDir),
+                );
+                // back
+                addQuad(
+                    add(botA, scale(-boxWidth/2, outDir), scale(boxLength, wallDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    scale(boxWidth, outDir),
+                );
+                // top
+                addQuad(
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    scale(boxWidth, outDir),
+                );
+            }// TODO: only conditioned on large difference (save triangles and avoid artifacts)
         }
 
         while (Math.random() < bladeChance) {

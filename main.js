@@ -673,12 +673,14 @@ var _loop_2 = function (p) {
         hexColor = hexColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
         worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
         var sideShadow = 0.4;
-        var grassColor = [0.3, 0.4, 0.2];
-        grassColor = grassColor.map(function (x) { return x * (heightOf(p) * 0.04 + 0.8); });
+        var grassColor = hexColor; //  [0.3, 0.4, 0.2]
+        grassColor = grassColor.map(function (x) { return Math.max(0, x * 0.7 - 0.05); });
         var adjacentTile = neighbors[(i + 1) % 6];
         if (!isTile(adjacentTile) || heightOf(adjacentTile) < heightOf(p) - 1) {
-            var stoneColor = function () {
+            var stoneColor = function (light) {
+                if (light === void 0) { light = 1; }
                 var bright = 1.25 + Math.random() * 0.5;
+                bright *= light;
                 var grey = 0.4;
                 return add(scale(bright * grey, hexColor), scale(1 - grey, [1, 1, 1]));
             };
@@ -692,16 +694,16 @@ var _loop_2 = function (p) {
                 var boxLength = Math.random() * 0.2 + 0.15;
                 var boxStart = Math.random() * (wallLength - boxLength);
                 var boxWidth = Math.random() * 0.1 + 0.05;
-                var boxHeight = Math.random() * 0.1 + 0.025;
+                var boxHeight = Math.random() * 0.05 + 0.01;
                 var topA = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
                 var botA = add([ax, 8, ay], scale(boxStart, wallDir));
                 var up = [0, -1, 0];
                 var color = stoneColor();
-                function addQuad(a, b, d, draw) {
+                var addQuad = function (a, b, d, draw) {
                     if (draw === void 0) { draw = color; }
                     worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
                     worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
-                }
+                };
                 // front
                 addQuad(add(topA, scale(boxWidth / 2, outDir), scale(boxHeight, up)), add(botA, scale(boxWidth / 2, outDir)), scale(boxLength, wallDir));
                 // side 1
@@ -716,6 +718,39 @@ var _loop_2 = function (p) {
             for (var j = 0; j < 2; j++) {
                 _loop_4(j);
             }
+            var _loop_5 = function (j) {
+                var wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                var wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
+                var outDir = unit([wallDir[2], 0, -wallDir[0]]);
+                var wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
+                var boxLength = Math.random() * 0.2 + 0.25;
+                var boxStart = Math.random() * (wallLength - boxLength);
+                var boxWidth = Math.random() * 0.2 + 0.2;
+                var boxHeight = -Math.random() * 1 - 0.15;
+                var topA = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                var botA = add([ax, 8, ay], scale(boxStart, wallDir));
+                var up = [0, -1, 0];
+                var color = stoneColor(0.75);
+                var addQuad = function (a, b, d, draw) {
+                    if (draw === void 0) { draw = color; }
+                    worldMesh.addSingleColor([b, a, add(a, d)], draw, "cliff");
+                    worldMesh.addSingleColor([b, add(a, d), add(b, d)], draw, "cliff");
+                };
+                // front
+                addQuad(add(topA, scale(boxWidth / 2, outDir), scale(boxHeight, up)), add(botA, scale(boxWidth / 2, outDir)), scale(boxLength, wallDir));
+                // side 1
+                addQuad(add(botA, scale(-boxWidth / 2, outDir)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), scale(boxLength, wallDir));
+                // side 2
+                addQuad(add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), add(botA, scale(-boxWidth / 2, outDir)), scale(boxWidth, outDir));
+                // back
+                addQuad(add(botA, scale(-boxWidth / 2, outDir), scale(boxLength, wallDir)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)), scale(boxWidth, outDir));
+                // top
+                addQuad(add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up)), add(topA, scale(-boxWidth / 2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)), scale(boxWidth, outDir));
+            };
+            // TODO: only if the height difference is large enough
+            for (var j = 0; j < 2; j++) {
+                _loop_5(j);
+            } // TODO: only conditioned on large difference (save triangles and avoid artifacts)
         }
         while (Math.random() < bladeChance) {
             // add a clump
