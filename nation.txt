@@ -1,0 +1,119 @@
+
+// divide it into territories
+
+let territorySize = 30;
+let territoryCount = mass.length/territorySize + 1 | 0;
+
+type Territory = {
+    id: string,
+    cells: HexPos[],
+    color: string,
+};
+
+// TODO: use height to determine territories
+
+let territories: Territory[] = [];
+let territoryMap: {[k: string]: Territory} = {};
+
+for (let cell of mass) {
+    territoryMap[hexKey(cell)] = {
+        id: hexKey(cell),
+        cells: [cell],
+        color: randomChoose(["#083", "#093", "#007B33", "#A94", "#983", "#AAC"]),
+    };
+    territories.push(territoryMap[hexKey(cell)]);
+}
+
+while (territories.length > territoryCount) {
+    // find the smallest territory
+    let smallest = 0;
+    for (let i = 0; i < territories.length; i++) {
+        if (territories[i].cells.length < territories[smallest].cells.length) {
+            smallest = i;
+        }
+    }
+    let smallestTerritory = territories[smallest];
+    territories[smallest] = territories[territories.length-1];
+    territories.pop();
+    // find neighboring territory
+    let neighboringTerritory: Territory | null = null;
+    while (neighboringTerritory == null) {
+        let contained = randomChoose(smallestTerritory.cells);
+        let neighbor = randomChoose(hexNeighbors(contained));
+        if (territoryMap[hexKey(neighbor)] && territoryMap[hexKey(neighbor)] != smallestTerritory) {
+            neighboringTerritory = territoryMap[hexKey(neighbor)];
+        }
+    }
+    // merge the two
+    for (let cell of smallestTerritory.cells) {
+        territoryMap[hexKey(cell)] = neighboringTerritory;
+        neighboringTerritory.cells.push(cell);
+    }
+}
+
+
+// suppose we just merged adjacent nations of the same color
+// this would lead to interesting variations in size and shape, and simplify border presentation
+
+for (let p of mass) {
+    for (let n of hexNeighbors(p)) {
+        if (hexKey(n) in territoryMap && territoryMap[hexKey(n)] != territoryMap[hexKey(p)] && territoryMap[hexKey(p)].color == territoryMap[hexKey(n)].color) {
+            // merge the territories
+            let original = territoryMap[hexKey(p)];
+            let merged = territoryMap[hexKey(n)];
+            for (let q of mass) {
+                if (territoryMap[hexKey(q)] == merged) {
+                    territoryMap[hexKey(q)] = original;
+                    original.cells.push(q);
+                }
+            }
+        }
+    }
+}
+
+// with overwhelming likelihood, there are at least two nations.
+// we can ignore the case where this is not true (for now; I want to handle it eventually)
+
+type Nation = {
+    cells: HexPos[],
+    color: string,
+    colorRGB: [number, number, number],
+    capitol: HexPos,
+};
+
+let usedTerritories: Territory[] = [];
+let nations: Nation[] = [];
+let nationMap: {[k: string]: Nation} = {};
+for (let p of mass) {
+    let territory = territoryMap[hexKey(p)];
+    if (usedTerritories.indexOf(territory) == -1) {
+        usedTerritories.push(territory);
+        let capitol = territory.cells[Math.random() * territory.cells.length | 0];
+        let color = randomChoose(["#F00", "#FF0", "#00F"]);
+        let nonBorder = territory.cells.filter((p) => {
+            for (let n of hexNeighbors(p)) {
+                if (hexKey(n) in massSet) {
+                    if (territoryMap[hexKey(n)] != territoryMap[hexKey(p)]) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+        if (nonBorder.length > 0) {
+            capitol = nonBorder[Math.random() * nonBorder.length | 0];
+        }
+        let nation: Nation = {
+            cells: territory.cells,
+            color,
+            capitol,
+            colorRGB: [Math.random(), Math.random(), Math.random()],
+        };
+        nations.push(nation);
+        for (let cell of territory.cells) {
+            nationMap[hexKey(cell)] = nation;
+        }
+    }
+}
+
+// nations have an owner (which is a player)

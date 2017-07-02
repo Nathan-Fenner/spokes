@@ -1,8 +1,10 @@
 {
     "compilerOptions": {
-        "module": "commonjs",
+        "module": "amd",
         "sourceMap": true,
         "strictNullChecks": true,
-        "noImplicitAny": true
+        "noImplicitAny": true,
+        "outDir": "./build",
+        "outFile":"./build/build.js"
     }
 }

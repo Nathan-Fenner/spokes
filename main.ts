@@ -1,54 +1,28 @@
 
+import {HexPos, HexMap, generateMap} from './generation'
+
+import {clamp, randomChoose, median, range, distinct, middle} from './utility'
+
+
 let canvas = document.getElementById("canvas") as HTMLCanvasElement;
 canvas.width = 900;
 canvas.height = 600;
 
 // build a hex grid
 
-type GenerationParameters = {
-    avoiderCount: number,
-    tileCount: number,
-    smoothness: number,
-};
 
-let generationParameters: GenerationParameters = {
-    avoiderCount: Math.random() * 200 | 0,
-    tileCount: Math.random() * 500 + 750 | 0,
-    smoothness: Math.random()**2 * 60,
-};
 
 // generation parameters (TODO: expose this in the UI)
 
-
-function randomChoose<T>(xs: T[]): T {
-    return xs[Math.random() * xs.length|0];
-}
-function clamp(low: number, value: number, high: number): number {
-    return Math.min(high, Math.max(low, value));
-}
-
-type HexPos = {hx: number, hy: number};
-type WorldPos = {wx: number, wy: number};
+export type WorldPos = {wx: number, wy: number};
 
 function hexToWorld(pos: {hx: number, hy: number}) {
     let {hx, hy} = pos;
     return {wx: hx + hy*Math.cos(Math.PI*2/3), wy: hy * Math.sin(Math.PI*2/3)};
 }
 
-function hexKey(cell: HexPos): string {
-    return cell.hx + "H" + cell.hy;
-}
-
-function hexNeighbors(p: HexPos): HexPos[] {
-    let result = [];
-    for (let {dx, dy} of [{dx: 1, dy: 0}, {dx: 1, dy: 1}, {dx: 0, dy: 1}, {dx: -1, dy: 0}, {dx: -1, dy: -1}, {dx: 0, dy: -1}]) {
-        result.push({hx: p.hx + dx, hy: p.hy + dy});
-    }
-    return result
-}
-
 function hexCorners(p: HexPos): WorldPos[] {
-    let ns = hexNeighbors(p);
+    let ns = p.neighbors();
     let rs: WorldPos[] = [];
     for (let i = 0; i < 6; i++) {
         let {wx: cx, wy: cy} = hexToWorld(p);
@@ -59,172 +33,8 @@ function hexCorners(p: HexPos): WorldPos[] {
     return rs;
 }
 
-function hexDistance(p: HexPos, q: HexPos): number {
-    if (p.hx == q.hx || p.hy == q.hy) {
-        return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
-    }
-    if ((p.hx - q.hx < 0) == (p.hy - q.hy < 0)) {
-        return Math.max(Math.abs(p.hx - q.hx), Math.abs(p.hy - q.hy));
-    }
-    return Math.abs(p.hx - q.hx) + Math.abs(p.hy - q.hy);
-}
 
 // world generation
-// randomly grow a mass
-let mass: HexPos[] = [{hx: 0, hy: 0}];
-let massSet: {[k: string]: boolean} = {[hexKey(mass[0])]: true};
-type Avoider = HexPos & {r: number};
-let avoiders: Avoider[] = [];
-
-for (let i = 0; i < generationParameters.avoiderCount; i++) {
-    avoiders.push({
-        hx: Math.random() * 100 - 50,
-        hy: Math.random() * 100 - 50,
-        r: Math.random() * 5 + 2,
-    });
-}
-
-while (mass.length < generationParameters.tileCount) {
-    let from = randomChoose(mass);
-    let neighbor = randomChoose(hexNeighbors(from));
-    let signature = hexKey(neighbor);
-    if (signature in massSet) {
-        continue;
-    }
-    let reject = 0;
-    for (let avoider of avoiders) {
-        reject = Math.max(reject, avoider.r - 2*hexDistance(neighbor, avoider)**0.5);
-    }
-    // 0.9 is the fuzziness parameter.
-    // if it's higher, borders become sharper but more regular
-    // if it's much lower, borders completely disappear
-    if (Math.random() < 0.9 && Math.random() < reject) {
-        continue;
-    }
-    mass.push(neighbor);
-    massSet[signature] = true;
-}
-
-// the landmass has been made
-
-// divide it into territories
-
-let territorySize = 30;
-let territoryCount = mass.length/territorySize + 1 | 0;
-
-type Territory = {
-    id: string,
-    cells: HexPos[],
-    color: string,
-};
-
-// TODO: use height to determine territories
-
-let territories: Territory[] = [];
-let territoryMap: {[k: string]: Territory} = {};
-
-for (let cell of mass) {
-    territoryMap[hexKey(cell)] = {
-        id: hexKey(cell),
-        cells: [cell],
-        color: randomChoose(["#083", "#093", "#007B33", "#A94", "#983", "#AAC"]),
-    };
-    territories.push(territoryMap[hexKey(cell)]);
-}
-
-while (territories.length > territoryCount) {
-    // find the smallest territory
-    let smallest = 0;
-    for (let i = 0; i < territories.length; i++) {
-        if (territories[i].cells.length < territories[smallest].cells.length) {
-            smallest = i;
-        }
-    }
-    let smallestTerritory = territories[smallest];
-    territories[smallest] = territories[territories.length-1];
-    territories.pop();
-    // find neighboring territory
-    let neighboringTerritory: Territory | null = null;
-    while (neighboringTerritory == null) {
-        let contained = randomChoose(smallestTerritory.cells);
-        let neighbor = randomChoose(hexNeighbors(contained));
-        if (territoryMap[hexKey(neighbor)] && territoryMap[hexKey(neighbor)] != smallestTerritory) {
-            neighboringTerritory = territoryMap[hexKey(neighbor)];
-        }
-    }
-    // merge the two
-    for (let cell of smallestTerritory.cells) {
-        territoryMap[hexKey(cell)] = neighboringTerritory;
-        neighboringTerritory.cells.push(cell);
-    }
-}
-
-
-// suppose we just merged adjacent nations of the same color
-// this would lead to interesting variations in size and shape, and simplify border presentation
-
-for (let p of mass) {
-    for (let n of hexNeighbors(p)) {
-        if (hexKey(n) in territoryMap && territoryMap[hexKey(n)] != territoryMap[hexKey(p)] && territoryMap[hexKey(p)].color == territoryMap[hexKey(n)].color) {
-            // merge the territories
-            let original = territoryMap[hexKey(p)];
-            let merged = territoryMap[hexKey(n)];
-            for (let q of mass) {
-                if (territoryMap[hexKey(q)] == merged) {
-                    territoryMap[hexKey(q)] = original;
-                    original.cells.push(q);
-                }
-            }
-        }
-    }
-}
-
-// with overwhelming likelihood, there are at least two nations.
-// we can ignore the case where this is not true (for now; I want to handle it eventually)
-
-type Nation = {
-    cells: HexPos[],
-    color: string,
-    colorRGB: [number, number, number],
-    capitol: HexPos,
-};
-
-let usedTerritories: Territory[] = [];
-let nations: Nation[] = [];
-let nationMap: {[k: string]: Nation} = {};
-for (let p of mass) {
-    let territory = territoryMap[hexKey(p)];
-    if (usedTerritories.indexOf(territory) == -1) {
-        usedTerritories.push(territory);
-        let capitol = territory.cells[Math.random() * territory.cells.length | 0];
-        let color = randomChoose(["#F00", "#FF0", "#00F"]);
-        let nonBorder = territory.cells.filter((p) => {
-            for (let n of hexNeighbors(p)) {
-                if (hexKey(n) in massSet) {
-                    if (territoryMap[hexKey(n)] != territoryMap[hexKey(p)]) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        });
-        if (nonBorder.length > 0) {
-            capitol = nonBorder[Math.random() * nonBorder.length | 0];
-        }
-        let nation: Nation = {
-            cells: territory.cells,
-            color,
-            capitol,
-            colorRGB: [Math.random(), Math.random(), Math.random()],
-        };
-        nations.push(nation);
-        for (let cell of territory.cells) {
-            nationMap[hexKey(cell)] = nation;
-        }
-    }
-}
-
-// nations have an owner (which is a player)
 
 // the goal of the game's design is to make a 4X game where rapidly expanding in the early game is a bad strategy.
 // in particular, long-term harmony with your neighbors should be your best strategy.
@@ -434,93 +244,7 @@ let lightingUniform = gl.getUniformLocation(shaderProgram, "lightDirection")!;
 
 let light = [2, -2, 2];
 
-let massHeight: {[k: string]: number} = {};
-massHeight[hexKey({hx: 0, hy: 0})] = 2;
-
-type HexTile = HexPos & "ReallyTile";
-
-function isTile(h: HexPos): h is HexTile {
-    return hexKey(h) in massHeight;
-}
-
-function heightOf(h: HexTile): number {
-    return massHeight[hexKey(h)];
-}
-
-while (1) {
-    let unassigned: {p: HexPos, v: number}[] = [];
-    for (let p of mass) {
-        if (hexKey(p) in massHeight) {
-            continue;
-        }
-        for (let n of hexNeighbors(p)) {
-            if (hexKey(n) in massHeight) {
-                unassigned.push({p, v: massHeight[hexKey(n)]});
-            }
-        }
-    }
-    if (unassigned.length == 0) {
-        break;
-    }
-    let choice = randomChoose(unassigned);
-    massHeight[hexKey(choice.p)] = clamp(0, choice.v + (Math.random()*100 < generationParameters.smoothness ? 0 : randomChoose([1, -1])), 8);
-}
-// Great! We're getting there.
-
-let tiles: HexTile[] = [];
-for (let p of mass) {
-    tiles.push(p as HexTile);
-}
-
-// Now, we smooth the result to eliminate areas of varying height with no strategic value.
-for (let i = 0; i < 10; i++) {
-    for (let j = 0; j < tiles.length; j++) {
-        let tile = tiles[j];
-        let h = heightOf(tile);
-        let forbid = [];
-        let neighbor = [];
-        for (let n of hexNeighbors(tile)) {
-            if (isTile(n) && Math.abs(heightOf(n) - h) <= 2) {
-                neighbor.push(heightOf(n));
-            }
-        }
-        let countH0 = neighbor.filter((x) => x == h).length;
-        let countHU = neighbor.filter((x) => x == h+1).length;
-        let countHD = neighbor.filter((x) => x == h-1).length;
-        // this may create new connections, but it won't destroy existing ones
-        if (neighbor.indexOf(h+1) < 0 && countHD > countH0) {
-            massHeight[hexKey(tile)] = h-1;
-        }
-        if (neighbor.indexOf(h-1) < 0 && countHU > countH0) {
-            massHeight[hexKey(tile)] = h+1;
-        }
-    }
-}
 // Now, let's create the vertices for our triangle, and send them to the GPU.
-
-function range(xs: number[]): number {
-    return Math.max(...xs) - Math.min(...xs);
-}
-function middle(xs: number[]): number {
-    return (Math.max(...xs) + Math.min(...xs)) / 2;
-}
-function median(xs: number[]): number {
-    let ys = xs.slice(0).sort();
-    if (ys.length % 2 == 0) {
-        return (ys[ys.length/2-1] + ys[ys.length/2]) / 2;
-    }
-    return ys[ys.length/2 | 0];
-}
-function distinct<A>(xs: A[]): boolean {
-    for (let i = 0; i < xs.length; i++) {
-        for (let j = 0; j < i; j++) {
-            if (xs[i] == xs[j]) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
 
 function cornerHeightCombine(self: number, hs: number[]): number {
     if (range([self, ...hs]) == 1) {
@@ -796,14 +520,16 @@ class Mesh {
     }
 }
 
+let world = generateMap();
+
 // TODO: hierarchical meshes?
 let worldMesh = new Mesh();
 
-for (let p of tiles) {
+for (let p of world.heightMap.cells()) {
     let cs = hexCorners(p);
     let bladeCount = 30 * randomChoose([0, 0, 0, 1, 1/8, 1/8, 1/20]);
     let corners: {point: WorldPos, height: number}[] = [];
-    let neighbors = hexNeighbors(p);
+    let neighbors = p.neighbors();
     for (let i = 0; i < 6; i++) {
         let n1 = neighbors[i];
         let n2 = neighbors[(i+1)%6];
@@ -812,13 +538,13 @@ for (let p of tiles) {
         let pos3 = hexToWorld(n2);
         let point = {wx: (pos1.wx + pos2.wx + pos3.wx)/3, wy: (pos1.wy + pos2.wy + pos3.wy)/3};
         let hs: number[] = [];
-        if (isTile(n1)) {
-            hs.push(heightOf(n1));
+        if (world.heightMap.contains(n1)) {
+            hs.push(world.heightMap.get(n1));
         }
-        if (isTile(n2)) {
-            hs.push(heightOf(n2));
+        if (world.heightMap.contains(n2)) {
+            hs.push(world.heightMap.get(n2));
         }
-        let height = cornerHeightCombine(heightOf(p), hs);
+        let height = cornerHeightCombine(world.heightMap.get(p), hs);
         corners.push({point, height});
     }
 
@@ -834,13 +560,13 @@ for (let p of tiles) {
 
         let reheight = (h: number) => -h * 0.25;
 
-        let mainHeight = reheight(heightOf(p));
+        let mainHeight = reheight(world.heightMap.get(p));
         let cornerAHeight = reheight(corners[i].height);
         let cornerBHeight = reheight(corners[(i+1)%6].height);
 
         let hexColor: Vec3 = [0.4, 0.6, 0.25];
         // dirt: [0.9, 0.65, 0.35];
-        hexColor = hexColor.map((x) => x * (heightOf(p) * 0.04 + 0.8));
+        hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8));
 
         worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
 
@@ -849,7 +575,7 @@ for (let p of tiles) {
         grassColor = grassColor.map((x) => Math.max(0, x * 0.7 - 0.05));
 
         let adjacentTile = neighbors[(i+1)%6];
-        if (!isTile(adjacentTile) || heightOf(adjacentTile) < heightOf(p) - 1) {
+        if (!world.heightMap.contains(adjacentTile) || world.heightMap.get(adjacentTile) < world.heightMap.get(p) - 1) {
             let stoneColor = (light = 1) => {
                 let bright = 1.25 + Math.random()*0.5;
                 bright *= light;
@@ -1111,12 +837,12 @@ function lookAt(from: Vec3, to: Vec3): number[] {
 }
 let cameraFocus = function() {
     let sum = {x: 0, y: 0};
-    for (let tile of mass) {
+    for (let tile of world.heightMap.cells()) {
         sum.x += hexToWorld(tile).wx;
         sum.y += hexToWorld(tile).wy;
     }
-    sum.x /= mass.length;
-    sum.y /= mass.length;
+    sum.x /= world.heightMap.cells().length;
+    sum.y /= world.heightMap.cells().length;
     return sum;
 }();
 
@@ -1275,17 +1001,3 @@ loop();
 function humanize(variable: string): string {
     return variable.split(/(?=[A-Z])/).join(" ").toLowerCase();
 }
-
-let parametersDiv = document.getElementById("parameters") as HTMLDivElement;
-parametersDiv.innerHTML += `<ul>`;
-function showParameter(name: keyof typeof generationParameters) {
-    let value = generationParameters[name];
-    if (typeof value == "number") {
-        value = Math.floor(value * 10 + 0.5) / 10;
-    }
-    parametersDiv.innerHTML += `<li><em>${humanize(name)}</em>: ${value}`;
-}
-showParameter("tileCount");
-showParameter("avoiderCount");
-showParameter("smoothness");
-parametersDiv.innerHTML += `</ul>`;
