@@ -8,7 +8,7 @@ import {Vec3, add, scale, subtract, magnitude, unit, cross} from './matrix'
 import {Glacier} from './glacial';
 
 let canvas = document.getElementById("canvas") as HTMLCanvasElement;
-canvas.width = 900;
+canvas.width = 600;
 canvas.height = 600;
 
 // build a hex grid
@@ -69,6 +69,7 @@ let specification = {
         vertexPosition: Glacier.vec3,
         vertexColor: Glacier.vec3,
         vertexNormal: Glacier.vec3,
+        vertexBanding: Glacier.float,
     },
 };
 
@@ -82,16 +83,19 @@ export let glacier = new Glacier<typeof specification>({
     attribute vec3 vertexPosition;
     attribute vec3 vertexColor;
     attribute vec3 vertexNormal;
+    attribute float vertexBanding;
 
     varying vec3 fragmentPosition;
     varying vec3 fragmentColor;
     varying vec3 fragmentNormal;
+    varying float fragmentBanding;
 
     void main(void) {
         gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);
         fragmentPosition = vertexPosition;
         fragmentColor = vertexColor;
         fragmentNormal = vertexNormal;
+        fragmentBanding = vertexBanding;
     }
     `,
     fragmentShader: `
@@ -103,6 +107,7 @@ export let glacier = new Glacier<typeof specification>({
     varying vec3 fragmentPosition;
     varying vec3 fragmentColor;
     varying vec3 fragmentNormal;
+    varying float fragmentBanding;
 
     float random( vec3 p )
     {
@@ -133,6 +138,12 @@ export let glacier = new Glacier<typeof specification>({
         float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);
         if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {
             // gl_FragColor.rgb *= 0.75;
+        }
+        if (fragmentBanding > 0.94) {
+            gl_FragColor.rgb *= 0.95;
+        }
+        if (fragmentBanding > 0.97) {
+            gl_FragColor.rgb *= 0.9;
         }
     }
     `,
@@ -175,6 +186,7 @@ type MeshVertex = {
     vertexPosition: Vec3,
     vertexNormal: Vec3,
     vertexColor: Vec3,
+    vertexBanding: number,
 };
 
 let meshTriangles: [MeshVertex, MeshVertex, MeshVertex][] = [];
@@ -183,9 +195,14 @@ function triangleNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
     return unit(cross(subtract(b, a), subtract(c, a)));
 }
 
-function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec3}, group?: string) {
+function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec3, vertexBanding?: number}, group?: string) {
+    let banding = attributes.vertexBanding || 0;
     let normal = triangleNormal(va, vb, vc);
-    meshTriangles.push([{vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor}, {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor}, {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor}]);
+    meshTriangles.push([
+        {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
+        {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
+        {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding}
+    ]);
 }
 
 for (let p of world.heightMap.cells()) {
@@ -231,7 +248,7 @@ for (let p of world.heightMap.cells()) {
         // dirt: [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8));
 
-        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], {vertexColor: hexColor}, "surface");
+        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: 1}, "surface");
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = hexColor; //  [0.3, 0.4, 0.2]
@@ -421,10 +438,6 @@ for (let p of world.heightMap.cells()) {
 let worldRendered = meshTriangles; // worldMesh.render();
 
 glacier.bufferTriangles(worldRendered);
-
-// Set the size of the view:
-canvas.width = 600; // TODO: explain about CSS here
-canvas.height = 600;
 
 function normalizeSet(vec: Vec3) {
     let mag = Math.sqrt(vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2]);

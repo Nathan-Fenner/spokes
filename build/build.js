@@ -549,7 +549,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     "use strict";
     exports.__esModule = true;
     var canvas = document.getElementById("canvas");
-    canvas.width = 900;
+    canvas.width = 600;
     canvas.height = 600;
     function hexToWorld(pos) {
         var hx = pos.hx, hy = pos.hy;
@@ -590,12 +590,13 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         attributes: {
             vertexPosition: glacial_1.Glacier.vec3,
             vertexColor: glacial_1.Glacier.vec3,
-            vertexNormal: glacial_1.Glacier.vec3
+            vertexNormal: glacial_1.Glacier.vec3,
+            vertexBanding: glacial_1.Glacier.float
         }
     };
     exports.glacier = new glacial_1.Glacier({
-        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n    }\n    ",
-        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n    }\n    ",
+        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n    attribute float vertexBanding;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n        fragmentBanding = vertexBanding;\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n        if (fragmentBanding > 0.94) {\n            gl_FragColor.rgb *= 0.95;\n        }\n        if (fragmentBanding > 0.97) {\n            gl_FragColor.rgb *= 0.9;\n        }\n    }\n    ",
         specification: specification,
         context: gl
     });
@@ -626,8 +627,13 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         return matrix_1.unit(matrix_1.cross(matrix_1.subtract(b, a), matrix_1.subtract(c, a)));
     }
     function addTriangle(va, vb, vc, attributes, group) {
+        var banding = attributes.vertexBanding || 0;
         var normal = triangleNormal(va, vb, vc);
-        meshTriangles.push([{ vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor }, { vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor }, { vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor }]);
+        meshTriangles.push([
+            { vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0 },
+            { vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding },
+            { vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding }
+        ]);
     }
     var _loop_2 = function (p) {
         var cs = hexCorners(p);
@@ -666,7 +672,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             var hexColor = [0.4, 0.6, 0.25];
             // dirt: [0.9, 0.65, 0.35];
             hexColor = hexColor.map(function (x) { return x * (world.heightMap.get(p) * 0.04 + 0.8); });
-            addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], { vertexColor: hexColor }, "surface");
+            addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], { vertexColor: hexColor, vertexBanding: 1 }, "surface");
             var sideShadow = 0.4;
             var grassColor = hexColor; //  [0.3, 0.4, 0.2]
             grassColor = grassColor.map(function (x) { return Math.max(0, x * 0.7 - 0.05); });
@@ -808,9 +814,6 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
     var worldRendered = meshTriangles; // worldMesh.render();
     exports.glacier.bufferTriangles(worldRendered);
-    // Set the size of the view:
-    canvas.width = 600; // TODO: explain about CSS here
-    canvas.height = 600;
     function normalizeSet(vec) {
         var mag = Math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
         vec[0] /= mag;
