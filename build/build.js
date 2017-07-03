@@ -198,7 +198,7 @@ define("generation", ["require", "exports", "utility"], function (require, expor
     }
     exports.generateMap = generateMap;
 });
-define("matrix", ["require", "exports", "utility"], function (require, exports, utility_2) {
+define("matrix", ["require", "exports"], function (require, exports) {
     "use strict";
     exports.__esModule = true;
     function cross(u, v) {
@@ -252,208 +252,300 @@ define("matrix", ["require", "exports", "utility"], function (require, exports, 
         return scale(1 / magnitude(v), v);
     }
     exports.unit = unit;
-    function compressPath(path) {
-        return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
-    }
-    exports.compressPath = compressPath;
-    var PointSet = (function () {
-        function PointSet() {
-            this.levels = { dimension: 0, next: null };
-        }
-        PointSet.prototype.find = function (p, eps) {
-            var signature = "";
-            var roots = [{ root: this.levels, path: "_" }];
-            while (roots.length > 0) {
-                var _a = roots.pop(), root = _a.root, path = _a.path;
-                var next = root.next;
-                if (!next) {
-                    continue; // nothing to do
-                }
-                if (distance(next.pivot, p) < eps) {
-                    return { path: compressPath(path), value: next.value };
-                }
-                if (p[root.dimension] < next.pivot[root.dimension] + eps) {
-                    roots.push({ root: next.low, path: path + "L" });
-                }
-                if (p[root.dimension] > next.pivot[root.dimension] - eps) {
-                    roots.push({ root: next.high, path: path + "H" });
-                }
-            }
-            return null;
-        };
-        PointSet.prototype.insertInto = function (p, root, v, eps) {
-            var dimensions = [0, 1, 2];
-            if (root.next) {
-                if (distance(p, root.next.pivot) < eps) {
-                    throw "bad behavior: do not insert point with nearby neighbor";
-                }
-                if (p[root.dimension] < root.next.pivot[root.dimension]) {
-                    this.insertInto(p, root.next.low, v, eps);
-                }
-                else {
-                    this.insertInto(p, root.next.high, v, eps);
-                }
-            }
-            else {
-                root.next = {
-                    pivot: p,
-                    value: v,
-                    low: { dimension: utility_2.randomChoose(dimensions), next: null },
-                    high: { dimension: utility_2.randomChoose(dimensions), next: null }
-                };
-            }
-        };
-        PointSet.prototype.insertPoints = function (ps, eps) {
-            var qs = ps.slice(0);
-            for (var i = 0; i < qs.length; i++) {
-                var j = i + Math.random() * (qs.length - i) | 0;
-                var a = qs[i];
-                var b = qs[j];
-                qs[i] = b;
-                qs[j] = a;
-            }
-            for (var _i = 0, qs_1 = qs; _i < qs_1.length; _i++) {
-                var _a = qs_1[_i], p = _a.p, v = _a.v;
-                if (!this.find(p, eps)) {
-                    this.insertInto(p, this.levels, v, eps);
-                }
-            }
-        };
-        return PointSet;
-    }());
-    exports.PointSet = PointSet;
-    exports.attributeCombiner = {
-        normal: function (list) { return unit(list.reduce(plus, [0, 0, 0])); },
-        color: function (list) { return scale(1 / list.length, list.reduce(plus, [0, 0, 0])); }
-    };
-    var Mesh = (function () {
-        function Mesh() {
-            this.triangles = [];
-        }
-        Mesh.prototype.count = function () {
-            return this.triangles.length;
-        };
-        Mesh.prototype.addGeneral = function (vertices) {
-            this.triangles.push({ vertices: vertices });
-        };
-        Mesh.prototype.addSingleColor = function (positions, color, smoothingGroup) {
-            // note that orientation matters to determine normal
-            var normal = unit(cross(subtract(positions[1], positions[0]), subtract(positions[2], positions[0])));
-            this.triangles.push({
-                vertices: [
-                    { position: positions[0], color: color, normal: normal },
-                    { position: positions[1], color: color, normal: normal },
-                    { position: positions[2], color: color, normal: normal },
-                ],
-                smoothingGroup: smoothingGroup
-            });
-        };
-        Mesh.prototype.removeDoubledSurfaces = function () {
-            var EPS = 0.001;
-            var allPoints = [];
-            for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
-                var triangle = _a[_i];
-                allPoints.push.apply(allPoints, triangle.vertices.map(function (x) { return ({ p: x.position, v: null }); }));
-            }
-            var tree = new PointSet();
-            tree.insertPoints(allPoints, EPS);
-            function describeVertex(vertex) {
-                var result = tree.find(vertex.position, EPS);
-                if (result) {
-                    return result.path;
-                }
-                window.blub = tree;
-                window.flub = vertex.position;
-                throw "invalid";
-            }
-            function describe(triangle) {
-                return triangle.vertices.map(describeVertex).sort().join(":");
-            }
-            var triangleCount = {};
-            for (var _b = 0, _c = this.triangles; _b < _c.length; _b++) {
-                var triangle = _c[_b];
-                var description = describe(triangle);
-                if (description in triangleCount) {
-                    triangleCount[description]++;
-                }
-                else {
-                    triangleCount[description] = 1;
-                }
-            }
-            var newTriangles = [];
-            for (var _d = 0, _e = this.triangles; _d < _e.length; _d++) {
-                var triangle = _e[_d];
-                var description = describe(triangle);
-                if (triangleCount[description] >= 2) {
-                    continue;
-                }
-                newTriangles.push(triangle);
-            }
-            this.triangles = newTriangles;
-        };
-        Mesh.prototype.render = function () {
-            var positions = [];
-            var colors = [];
-            var normals = [];
-            for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
-                var triangle = _a[_i];
-                for (var _b = 0, _c = triangle.vertices; _b < _c.length; _b++) {
-                    var vertex = _c[_b];
-                    positions.push.apply(positions, vertex.position);
-                    colors.push.apply(colors, vertex.color);
-                    normals.push.apply(normals, vertex.normal);
-                }
-            }
-            return {
-                positions: new Float32Array(positions),
-                colors: new Float32Array(colors),
-                normals: new Float32Array(normals)
-            };
-        };
-        Mesh.prototype.smoothAttribute = function (group, attribute, eps) {
-            var pointMap = {};
-            var hash = function (x) { return Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps); };
-            for (var _i = 0, _a = this.triangles; _i < _a.length; _i++) {
-                var triangle = _a[_i];
-                if (triangle.smoothingGroup != group) {
-                    continue;
-                }
-                for (var _b = 0, _c = triangle.vertices; _b < _c.length; _b++) {
-                    var vertex = _c[_b];
-                    pointMap[hash(vertex.position)] = pointMap[hash(vertex.position)] || [];
-                    pointMap[hash(vertex.position)][triangle.smoothingGroup] = [];
-                }
-            }
-            for (var _d = 0, _e = this.triangles; _d < _e.length; _d++) {
-                var triangle = _e[_d];
-                if (triangle.smoothingGroup != group) {
-                    continue;
-                }
-                for (var _f = 0, _g = triangle.vertices; _f < _g.length; _f++) {
-                    var vertex = _g[_f];
-                    pointMap[hash(vertex.position)][triangle.smoothingGroup].push(vertex[attribute]);
-                }
-            }
-            for (var _h = 0, _j = this.triangles; _h < _j.length; _h++) {
-                var triangle = _j[_h];
-                if (triangle.smoothingGroup != group) {
-                    continue;
-                }
-                for (var _k = 0, _l = triangle.vertices; _k < _l.length; _k++) {
-                    var vertex = _l[_k];
-                    var otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
-                    var combined = exports.attributeCombiner[attribute](otherAttributes);
-                    vertex[attribute] = combined;
-                    // nearbyNormals[1 % nearbyNormals.length];
-                    // unit(nearbyNormals.reduce(add, [0, 0, 0]));
-                }
-            }
-        };
-        return Mesh;
-    }());
-    exports.Mesh = Mesh;
 });
-define("main", ["require", "exports", "generation", "utility", "matrix"], function (require, exports, generation_1, utility_3, matrix_1) {
+/*
+export type Vertex<T extends {[k: string]: AttributeType}, Position extends string, Normal extends string> = {[k in keyof T]: AttributeMap[T[k]]} & {[k: Position & string]: Vec3}
+
+export type Triangle<T extends {[k: string]: AttributeType}> = {vertices: [Vertex<T>, Vertex<T>, Vertex<T>], smoothingGroup?: string};
+
+export type PointSetBranch<T> = {
+    next: {pivot: Vec3, value: T, low: PointSetBranch<T>, high: PointSetBranch<T>} | null;
+    dimension: 0 | 1 | 2;
+};
+
+export function compressPath(path: string): string {
+    return path.replace(/LL/g, "A").replace(/RR/g, "B").replace(/LR/g, "C").replace(/RL/g, "D");
+}
+
+export class PointSet<T> {
+    levels: PointSetBranch<T>;
+    constructor() {
+        this.levels = {dimension: 0, next: null};
+    }
+    find(p: Vec3, eps: number): {path: string, value: T} | null {
+        let signature = "";
+        let roots = [{root: this.levels, path: "_"}];
+        while (roots.length > 0) {
+            let {root, path} = roots.pop()!;
+            let next = root.next;
+            if (!next) {
+                continue; // nothing to do
+            }
+            if (distance(next.pivot, p) < eps) {
+                return {path: compressPath(path), value: next.value};
+            }
+            if (p[root.dimension] < next.pivot[root.dimension] + eps) {
+                roots.push({root: next.low, path: path + "L"});
+            }
+            if (p[root.dimension] > next.pivot[root.dimension] - eps) {
+                roots.push({root: next.high, path: path + "H"});
+            }
+        }
+        return null;
+    }
+    insertInto(p: Vec3, root: PointSetBranch<T>, v: T, eps: number) {
+        let dimensions: [0, 1, 2] = [0, 1, 2];
+        if (root.next) {
+            if (distance(p, root.next.pivot) < eps) {
+                throw "bad behavior: do not insert point with nearby neighbor";
+            }
+            if (p[root.dimension] < root.next.pivot[root.dimension]) {
+                this.insertInto(p, root.next.low, v, eps);
+            } else {
+                this.insertInto(p, root.next.high, v, eps);
+            }
+        } else {
+            root.next = {
+                pivot: p,
+                value: v,
+                low: {dimension: randomChoose(dimensions), next: null},
+                high: {dimension: randomChoose(dimensions), next: null},
+            }
+        }
+    }
+    insertPoints(ps: {p: Vec3, v: T}[], eps: number) {
+        let qs = ps.slice(0);
+        for (let i = 0; i < qs.length; i++) {
+            let j = i + Math.random() * (qs.length - i) | 0
+            let a = qs[i];
+            let b = qs[j];
+            qs[i] = b;
+            qs[j] = a;
+        }
+        for (let {p, v} of qs) {
+            if (!this.find(p, eps)) {
+                this.insertInto(p, this.levels, v, eps);
+            }
+        }
+    }
+}
+
+export let attributeCombiner = {
+    normal: (list: Vec3[]): Vec3 => unit(list.reduce(plus, [0, 0, 0])),
+    color: (list: Vec3[]): Vec3 => scale(1 / list.length, list.reduce(plus, [0, 0, 0])),
+};
+
+type VertexAttributes = { [k: string]: "vec3" | "vec4" | "mat4" };
+
+export class Mesh<T extends VertexAttributes, Position extends string, Normal extends string> {
+    triangles: Triangle<T & {[k in Position]: "vec3"} & {[k in Normal]: "vec3"}>[];
+    private positionName: Position;
+    private normalName: Normal;
+    constructor(attributes: T, positionName: Position, normalName: Normal) {
+        this.triangles = [];
+        this.positionName = positionName;
+        this.normalName = normalName;
+    }
+    count() {
+        return this.triangles.length;
+    }
+    addTriangle(posA: Vec3, posB: Vec3, posC: Vec3, otherAttributes: Vertex<T>, smoothingGroup?: string) {
+        // note that orientation matters to determine normal
+        let normal = unit(cross(subtract(posB, posA), subtract(posC, posA)));
+        let newVertices = [
+            { [this.positionName as string]: posA, [this.normalName as string]: normal },
+            { [this.positionName as string]: posB, [this.normalName as string]: normal },
+            { [this.positionName as string]: posC, [this.normalName as string]: normal },
+        ] as any;
+        for (let vertex of newVertices) {
+            for (let attribute in otherAttributes) {
+                vertex[attribute] = otherAttributes[attribute];
+            }
+        }
+        this.triangles.push({
+            vertices: newVertices,
+            smoothingGroup,
+        });
+    }
+    render(): Triangle<T & {[k in Position]: "vec3"} & {[k in Normal]: "vec3"}>[] {
+        return this.triangles;
+    }
+    smoothAttribute<Attribute extends Normal | keyof T>(group: string, attribute: Attribute, eps: number, combiner: (xs: (T[Attribute] | ({[k in Normal]: Vec3})[Attribute])[]) => (T[Attribute] | ({[k in Normal]: Vec3})[Attribute])) {
+        let pointMap: {[hash: string]: {[g: string]: Vec3[]}} = {};
+        let hash = (x: Vec3) => Math.floor(x[0] / eps) + ":" + Math.floor(x[1] / eps) + ":" + Math.floor(x[2] / eps);
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                let c: Vec3 = (vertex as Vertex<{[k in Position]: "vec3"}>)[this.positionName];
+                pointMap[hash(vertex[this.positionName])] = pointMap[hash(vertex[this.positionName])] || [];
+                pointMap[hash(vertex[this.positionName])][triangle.smoothingGroup] = [];
+            }
+        }
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                pointMap[hash(vertex.position)][triangle.smoothingGroup].push(vertex[attribute]);
+            }
+        }
+        for (let triangle of this.triangles) {
+            if (triangle.smoothingGroup != group) {
+                continue;
+            }
+            for (let vertex of triangle.vertices) {
+                let otherAttributes = pointMap[hash(vertex.position)][triangle.smoothingGroup];
+                let combined = combiner(otherAttributes);
+                vertex[attribute] = combined;
+            }
+        }
+    }
+}
+*/ 
+define("glacial", ["require", "exports"], function (require, exports) {
+    "use strict";
+    exports.__esModule = true;
+    // TODO: include where it renders to in the type 
+    var Glacier = (function () {
+        function Glacier(options) {
+            this.count = 0;
+            this.gl = options.context;
+            this.vertexShader = this.gl.createShader(this.gl.VERTEX_SHADER); // TODO: check error
+            this.gl.shaderSource(this.vertexShader, options.vertexShader);
+            this.gl.compileShader(this.vertexShader);
+            if (!this.gl.getShaderParameter(this.vertexShader, this.gl.COMPILE_STATUS)) {
+                throw { message: "error loading vertex shader: " + this.gl.getShaderInfoLog(this.vertexShader) };
+            }
+            this.fragmentShader = this.gl.createShader(this.gl.FRAGMENT_SHADER); // TODO: check error
+            this.gl.shaderSource(this.fragmentShader, options.fragmentShader);
+            this.gl.compileShader(this.fragmentShader);
+            if (!this.gl.getShaderParameter(this.fragmentShader, this.gl.COMPILE_STATUS)) {
+                throw { message: "error loading vertex shader: " + this.gl.getShaderInfoLog(this.fragmentShader) };
+            }
+            this.program = this.gl.createProgram(); // TODO: check error
+            this.gl.attachShader(this.program, this.vertexShader);
+            this.gl.attachShader(this.program, this.fragmentShader);
+            this.gl.linkProgram(this.program);
+            if (!this.gl.getProgramParameter(this.program, this.gl.LINK_STATUS)) {
+                throw { message: "error linking program: " + this.gl.getProgramInfoLog(this.program) };
+            }
+            this.attributeLocations = {}; // note: add all properties below
+            this.attributeBuffers = {}; // note: add all properties below
+            for (var attribute in options.specification.attributes) {
+                this.attributeLocations[attribute] = this.gl.getAttribLocation(this.program, attribute); // TODO: check error
+                this.attributeBuffers[attribute] = this.gl.createBuffer(); // TODO: check error
+            }
+            this.uniformLocations = {}; // note: add all properties below
+            for (var uniform in options.specification.uniforms) {
+                this.uniformLocations[uniform] = this.gl.getUniformLocation(this.program, uniform); // TODO: check error
+            }
+            this.specification = options.specification;
+            this.gl.enable(this.gl.DEPTH_TEST); // TODO: make this configurable
+            this.gl.viewport(0, 0, 600, 600); // TODO: make this configurable
+        }
+        Glacier.prototype.bufferTriangles = function (triangles) {
+            for (var attribute in this.attributeBuffers) {
+                var flattened = [];
+                for (var _i = 0, triangles_1 = triangles; _i < triangles_1.length; _i++) {
+                    var triangle = triangles_1[_i];
+                    for (var _a = 0, triangle_1 = triangle; _a < triangle_1.length; _a++) {
+                        var vertex = triangle_1[_a];
+                        var data = vertex[attribute];
+                        if (typeof data == "number") {
+                            flattened.push(data);
+                        }
+                        else {
+                            // TODO: is this the right type?
+                            flattened.push.apply(flattened, data);
+                        }
+                    }
+                }
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.attributeBuffers[attribute]);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(flattened), this.gl.STATIC_DRAW);
+            }
+            this.count = triangles.length;
+        };
+        Glacier.prototype.activate = function () {
+            this.gl.useProgram(this.program);
+            for (var attribute in this.attributeLocations) {
+                this.gl.enableVertexAttribArray(this.attributeLocations[attribute]);
+            }
+        };
+        Glacier.prototype.deactivate = function () {
+            for (var attribute in this.attributeLocations) {
+                this.gl.disableVertexAttribArray(this.attributeLocations[attribute]);
+            }
+        };
+        Glacier.prototype.setUniform = function (values) {
+            for (var uniform in values) {
+                // console.log(uniform, this.specification.uniforms[uniform], values[uniform]);
+                switch (this.specification.uniforms[uniform]) {
+                    case "float": {
+                        this.gl.uniform1f(this.uniformLocations[uniform], values[uniform]);
+                        break;
+                    }
+                    case "vec4": {
+                        var value = values[uniform];
+                        this.gl.uniform4f(this.uniformLocations[uniform], value[0], value[1], value[2], value[3]);
+                        break;
+                    }
+                    case "vec3": {
+                        var value = values[uniform];
+                        this.gl.uniform3f(this.uniformLocations[uniform], value[0], value[1], value[2]);
+                        break;
+                    }
+                    case "vec2": {
+                        var value = values[uniform];
+                        this.gl.uniform2f(this.uniformLocations[uniform], value[0], value[1]);
+                        break;
+                    }
+                    case "mat4": {
+                        var value = values[uniform];
+                        this.gl.uniformMatrix4fv(this.uniformLocations[uniform], false, value);
+                        break;
+                    }
+                    default: {
+                        throw "unknown";
+                    }
+                }
+            }
+        };
+        Glacier.prototype.draw = function (options) {
+            if (options === void 0) { options = {}; }
+            if (options.clearColor) {
+                this.gl.clearColor(options.clearColor[0], options.clearColor[1], options.clearColor[2], 1);
+            }
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+            // assign each buffer to its attribute
+            var sizeof = {
+                float: 1,
+                vec2: 2,
+                vec3: 3,
+                vec4: 4,
+                mat4: 16
+            };
+            for (var attribute in this.attributeBuffers) {
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.attributeBuffers[attribute]);
+                // TODO: support integer attributes, and fancier layouts
+                var attributeType = this.specification.attributes[attribute];
+                this.gl.vertexAttribPointer(this.attributeLocations[attribute], sizeof[attributeType], this.gl.FLOAT, false, 0, 0);
+            }
+            this.gl.drawArrays(this.gl.TRIANGLES, 0, this.count * 3);
+        };
+        Glacier.float = "float";
+        Glacier.vec2 = "vec2";
+        Glacier.vec3 = "vec3";
+        Glacier.vec4 = "vec4";
+        Glacier.mat2 = "mat2";
+        Glacier.mat3 = "mat3";
+        Glacier.mat4 = "mat4";
+        return Glacier;
+    }());
+    exports.Glacier = Glacier;
+});
+define("main", ["require", "exports", "generation", "utility", "matrix", "glacial"], function (require, exports, generation_1, utility_2, matrix_1, glacial_1) {
     "use strict";
     exports.__esModule = true;
     var canvas = document.getElementById("canvas");
@@ -487,113 +579,38 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         throw "unable to get webGL context";
     }
     var gl = tryGL;
-    // We're going to make a basic program to start.
-    // We'll just have a triangle.
-    // To do this, we have to introduce our first GL concept: shaders.
-    // A "shader" is a program that runs on the GPU. The language that WebGL uses
-    // is called GLSL. It looks something like C, though it's a lot simpler.
-    // This is a modern (i.e. ES2016) feature called template literals.
-    // It's basically a multiline string.
-    var vertexShaderSource = "\nprecision mediump float;\nuniform mat4 perspective;\nuniform mat4 cameraPosition;\nuniform mat4 camera;\n\nattribute vec3 vertexPosition;\nattribute vec3 vertexColor;\nattribute vec3 vertexNormal;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nvoid main(void) {\n    gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n    fragmentPosition = vertexPosition;\n    fragmentColor = vertexColor;\n    fragmentNormal = vertexNormal;\n}\n";
-    // An `attribute` is a value that's passed from the CPU (JavaScript)
-    // to the GPU (WebGL); in this case, per-vertex.
-    // It's declared as a vec3, a vector in 3D space.
-    // `main` is the shader function that runs for each vertex.
-    // `void` indicates that it returns nothing and takes no arguments.
-    // `gl_Position` is a global where we store the location of this triangle.
-    // You might think that locations in space could just be represented in 3
-    // coordinates; forward, left/right, and up/down (x, y, z, in some order).
-    // However, for reasons that we can explore in more detail later
-    // (that have to do with perspective and depth), `gl_Position` is a vec4.
-    // We just set the 4th component (called w) to 1.0 for now.
-    // Whew!
-    // Now let's color the triangle. It'll just be red:
-    var fragmentShaderSource = "\nprecision mediump float;\n\nuniform float time;\nuniform vec3 lightDirection;\n\nvarying vec3 fragmentPosition;\nvarying vec3 fragmentColor;\nvarying vec3 fragmentNormal;\n\nfloat random( vec3 p )\n{\n    vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n    return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n}\nfloat smoothNoise( vec2 p ) {\n    vec3 f = vec3(floor(p), 1.0);\n    float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n    float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n    return mix( f0, f1, fract(p.y) );\n}\nfloat cloudNoise( vec2 x, float f, float a ) {\n    float s = 0.0;\n    for (int i = 0; i < 5; i++) {\n        vec2 arg = x * pow(f, float(i));\n        s += smoothNoise(arg) * pow(a, float(i));\n    }\n    return s * (1.0 - a);\n}\n\nvoid main(void) {\n    float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n    float noise = random(floor(15.0 * fragmentPosition));\n    float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n    gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n    float originalHeight = fragmentPosition.y * -4.0;\n    float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n    if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n        // gl_FragColor.rgb *= 0.75;\n    }\n}\n";
-    // This is a fragment shader. It colors "fragments", which are usually
-    // pixels, at least until you're doing something more complicated.
-    // The GPU runs the fragment shader once for each pixel in every
-    // triangle that you draw. Its main job is to determine those pixels' colors.
-    // The declaration on the first line is not too important. It says to use
-    // 'medium' precision for floating-point (decimal) numbers. You can mostly
-    // just always include this incantation, at least until you know what you're
-    // doing.
-    // Just like `gl_Position`, we have the global `gl_FragColor` here.
-    // It's a vec4 of the form (R, G, B, A), referring to the red, green, blue,
-    // and alpha components of the color. An `alpha` of 1.0 is fully opaque and
-    // an `alpha` of 0.0 is fully invisible. Transparency is actually a little complicated,
-    // so for now we'll make everything opaque. Note that all values are in the range
-    // [0.0, 1.0].
-    // Whew! We'll now have to compile these shaders into programs that the GPU can run.
-    // We ask WebGL to create a shader object for us: 
-    var vertexShader = gl.createShader(gl.VERTEX_SHADER);
-    // Next, we tell it the source to use:
-    gl.shaderSource(vertexShader, vertexShaderSource);
-    // And now we ask it to be compiled:
-    gl.compileShader(vertexShader);
-    // Compilation is pretty fast, but not so fast you want to do it constantly.
-    // Shaders should be loaded up front, at the start of the program or the start of a scene, generally.
-    // Let's make sure nothing went wrong:
-    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
-        // This checks whether the shader compiled successfully.
-        // This can fail if your hardware doesn't support an operation you want to perform,
-        // or there's a syntax error in your shader script.
-        console.log("err:", gl.getShaderInfoLog(vertexShader));
-        throw "error loading vertex shader";
-    }
-    // Now we do the same thing for the fragment shader:
-    var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fragmentShader, fragmentShaderSource);
-    gl.compileShader(fragmentShader);
-    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
-        console.log(gl.getShaderInfoLog(fragmentShader));
-        throw "error loading fragment shader";
-    }
-    // Next, we combine the two shaders into a `Program`.
-    // The Program is what's actually run on the GPU.
-    var shaderProgram = gl.createProgram();
-    // We attach both of the shaders to the program.
-    // You can think of a program as basically a bundle
-    // of the things you need to actually run.
-    gl.attachShader(shaderProgram, vertexShader);
-    gl.attachShader(shaderProgram, fragmentShader);
-    // Then, we link it. The pieces were already compiled,
-    // this just puts everything together.
-    gl.linkProgram(shaderProgram);
-    // Here's some more error checking. Nothing ought to go wrong,
-    // but it's still good to check.
-    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-        console.log(gl.getProgramInfoLog(shaderProgram));
-        throw "error linking program";
-    }
-    // When we want to draw different kinds of things, we can switch programs.
-    // To start, we need to switch to the one we just made:
-    gl.useProgram(shaderProgram);
-    // If you look back at the vertex shader script, we had an attribute called
-    // `vertexPosition`. We need to ask WebGL how to refer to that location.
-    var vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "vertexPosition");
-    // We also have to turn it on:
-    gl.enableVertexAttribArray(vertexPositionAttribute);
-    var vertexColorAttribute = gl.getAttribLocation(shaderProgram, "vertexColor");
-    gl.enableVertexAttribArray(vertexColorAttribute);
-    var vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "vertexNormal");
-    gl.enableVertexAttribArray(vertexNormalAttribute);
-    // get the perspective uniform
-    var perspectiveUniform = gl.getUniformLocation(shaderProgram, "perspective");
-    var cameraPositionUniform = gl.getUniformLocation(shaderProgram, "cameraPosition");
-    var cameraUniform = gl.getUniformLocation(shaderProgram, "camera");
-    var timeUniform = gl.getUniformLocation(shaderProgram, "time");
-    var lightingUniform = gl.getUniformLocation(shaderProgram, "lightDirection");
+    var specification = {
+        uniforms: {
+            perspective: glacial_1.Glacier.mat4,
+            cameraPosition: glacial_1.Glacier.mat4,
+            camera: glacial_1.Glacier.mat4,
+            time: glacial_1.Glacier.float,
+            lightDirection: glacial_1.Glacier.vec3
+        },
+        attributes: {
+            vertexPosition: glacial_1.Glacier.vec3,
+            vertexColor: glacial_1.Glacier.vec3,
+            vertexNormal: glacial_1.Glacier.vec3
+        }
+    };
+    exports.glacier = new glacial_1.Glacier({
+        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n    }\n    ",
+        specification: specification,
+        context: gl
+    });
+    exports.glacier.activate();
     var light = [2, -2, 2];
     // Now, let's create the vertices for our triangle, and send them to the GPU.
     function cornerHeightCombine(self, hs) {
-        if (utility_3.range([self].concat(hs)) == 1) {
-            return utility_3.median([self].concat(hs));
+        if (utility_2.range([self].concat(hs)) == 1) {
+            return utility_2.median([self].concat(hs));
         }
-        if (hs.length == 2 && utility_3.range([self].concat(hs)) == 2 && utility_3.distinct([self].concat(hs))) {
-            return utility_3.middle([self].concat(hs));
+        if (hs.length == 2 && utility_2.range([self].concat(hs)) == 2 && utility_2.distinct([self].concat(hs))) {
+            return utility_2.middle([self].concat(hs));
         }
         if (hs.length == 2 && hs.filter(function (x) { return Math.abs(x - self) <= 1; }).length == 2) {
-            return utility_3.middle([self].concat(hs));
+            return utility_2.middle([self].concat(hs));
         }
         if (hs.length == 2) {
             var nearby = hs.filter(function (x) { return Math.abs(x - self) <= 1; });
@@ -604,11 +621,17 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
     // Here we create a regular JS array to store the coordinates of the triangle's corners.
     // The Z component will be 0 for all of them.
     var world = generation_1.generateMap();
-    // TODO: hierarchical meshes?
-    var worldMesh = new matrix_1.Mesh();
+    var meshTriangles = [];
+    function triangleNormal(a, b, c) {
+        return matrix_1.unit(matrix_1.cross(matrix_1.subtract(b, a), matrix_1.subtract(c, a)));
+    }
+    function addTriangle(va, vb, vc, attributes, group) {
+        var normal = triangleNormal(va, vb, vc);
+        meshTriangles.push([{ vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor }, { vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor }, { vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor }]);
+    }
     var _loop_2 = function (p) {
         var cs = hexCorners(p);
-        var bladeCount = 30 * utility_3.randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
+        var bladeCount = 30 * utility_2.randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
         var corners = [];
         var neighbors = p.neighbors();
         for (var i = 0; i < 6; i++) {
@@ -643,7 +666,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
             var hexColor = [0.4, 0.6, 0.25];
             // dirt: [0.9, 0.65, 0.35];
             hexColor = hexColor.map(function (x) { return x * (world.heightMap.get(p) * 0.04 + 0.8); });
-            worldMesh.addSingleColor([[wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by]], hexColor, "surface");
+            addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], { vertexColor: hexColor }, "surface");
             var sideShadow = 0.4;
             var grassColor = hexColor; //  [0.3, 0.4, 0.2]
             grassColor = grassColor.map(function (x) { return Math.max(0, x * 0.7 - 0.05); });
@@ -656,8 +679,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
                     var grey = 0.4;
                     return matrix_1.add(matrix_1.scale(bright * grey, hexColor), matrix_1.scale(1 - grey, [1, 1, 1]));
                 };
-                worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by]], stoneColor(), "wall");
-                worldMesh.addSingleColor([[ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay]], stoneColor(), "wall");
+                addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], { vertexColor: stoneColor() }, "wall");
+                addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], { vertexColor: stoneColor() }, "wall");
                 var _loop_4 = function (j) {
                     var wallDifference = matrix_1.subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
                     var wallDir = matrix_1.scale(1 / matrix_1.magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
@@ -673,8 +696,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
                     var color = stoneColor();
                     var addQuad = function (a, b, d, draw) {
                         if (draw === void 0) { draw = color; }
-                        worldMesh.addSingleColor([b, a, matrix_1.add(a, d)], draw, "cliff");
-                        worldMesh.addSingleColor([b, matrix_1.add(a, d), matrix_1.add(b, d)], draw, "cliff");
+                        addTriangle(b, a, matrix_1.add(a, d), { vertexColor: draw }, "cliff");
+                        addTriangle(b, matrix_1.add(a, d), matrix_1.add(b, d), { vertexColor: draw }, "cliff");
                     };
                     // front
                     addQuad(matrix_1.add(topA, matrix_1.scale(boxWidth / 2, outDir), matrix_1.scale(boxHeight, up)), matrix_1.add(botA, matrix_1.scale(boxWidth / 2, outDir)), matrix_1.scale(boxLength, wallDir));
@@ -705,8 +728,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
                     var color = stoneColor(0.75);
                     var addQuad = function (a, b, d, draw) {
                         if (draw === void 0) { draw = color; }
-                        worldMesh.addSingleColor([b, a, matrix_1.add(a, d)], draw, "cliff");
-                        worldMesh.addSingleColor([b, matrix_1.add(a, d), matrix_1.add(b, d)], draw, "cliff");
+                        addTriangle(b, a, matrix_1.add(a, d), { vertexColor: draw }, "cliff");
+                        addTriangle(b, matrix_1.add(a, d), matrix_1.add(b, d), { vertexColor: draw }, "cliff");
                     };
                     // front
                     addQuad(matrix_1.add(topA, matrix_1.scale(boxWidth / 2, outDir), matrix_1.scale(boxHeight, up)), matrix_1.add(botA, matrix_1.scale(boxWidth / 2, outDir)), matrix_1.scale(boxLength, wallDir));
@@ -750,8 +773,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
                     clumpX += sx;
                     clumpY += sy;
                     var bladeColor = [grassColor[0] * bladeShade, grassColor[1] * bladeShade, grassColor[2] * bladeShade];
-                    worldMesh.addSingleColor([[clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
-                    worldMesh.addSingleColor([[clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly]], bladeColor);
+                    addTriangle([clumpX - lx, clumpH + 0.1, clumpY - ly], [clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], { vertexColor: bladeColor });
+                    addTriangle([clumpX - ox + lx, clumpH - oh, clumpY - oy + ly], [clumpX + 3 * lx, clumpH - oh * 2, clumpY + 3 * ly], [clumpX + ox + lx, clumpH - oh, clumpY + oy + ly], { vertexColor: bladeColor });
                     clumpX -= sx;
                     clumpY -= sy;
                 }
@@ -768,11 +791,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
                 for (var s = 0; s < 7; s++) {
                     var h = r;
                     var d = 0.02;
-                    worldMesh.addSingleColor([
-                        [rockX, rockH - h, rockY,],
-                        [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r],
-                        [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r],
-                    ], hexColor.map(function (x) { return x * 0.3 + 0.6; }), "rock");
+                    addTriangle([rockX, rockH - h, rockY], [rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r], [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r], { vertexColor: hexColor.map(function (x) { return x * 0.3 + 0.6; }) }, "rock");
                 }
             }
         };
@@ -784,42 +803,14 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         var p = _a[_i];
         _loop_2(p);
     }
-    worldMesh.removeDoubledSurfaces();
-    worldMesh.smoothAttribute("surface", "color", 0.01);
-    worldMesh.smoothAttribute("surface", "normal", 0.01);
-    worldMesh.smoothAttribute("rock", "normal", 0.1);
-    var worldRendered = worldMesh.render();
-    // Now, we take the contents of the JS array and put them into the WebGL buffer.
-    // This is relatively slow: the biggest slowness in rendering is often sending
-    // information from the CPU to the GPU (TODO: explain this better).
-    // Now we have to create some buffers.
-    // Buffers are arrays that hold data that we want to send to the GPU.
-    // We create and bind a buffer here:
-    var triangleVertexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexBuffer);
-    // ARRAY_BUFFER means that it holds per-vertex data.
-    // Binding the buffer means that it's currently being modified.
-    // It will stay bound until we bind something else.
-    // Take a look at https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/bindBuffer for more information.
-    // Now we funnel the data from our array into the currently bound buffer.
-    // STATIC_DRAW indicates that we're not going to frequently modify the contents of the buffer.
-    // If you're going to do that, use DYNAMIC_DRAW instead. It will be faster.
-    gl.bufferData(gl.ARRAY_BUFFER, worldRendered.positions, gl.STATIC_DRAW);
-    var triangleColorBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, worldRendered.colors, gl.STATIC_DRAW);
-    var triangleNormalBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, worldRendered.normals, gl.STATIC_DRAW);
-    // We're so close!
-    // Let's get a black background!
-    gl.clearColor(0, 0, 0, 1);
-    // Things behind other things shouldn't drawn. We don't have this yet, but we'll turn it on anyway.
-    gl.enable(gl.DEPTH_TEST);
+    // worldMesh.smoothAttribute("surface", "vertexColor", 0.01);
+    // worldMesh.smoothAttribute("surface", "vertexNormal", 0.01);
+    // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
+    var worldRendered = meshTriangles; // worldMesh.render();
+    exports.glacier.bufferTriangles(worldRendered);
     // Set the size of the view:
     canvas.width = 600; // TODO: explain about CSS here
     canvas.height = 600;
-    gl.viewport(0, 0, 600, 600); // TODO: explain what this does
     function normalizeSet(vec) {
         var mag = Math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
         vec[0] /= mag;
@@ -882,7 +873,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         if (isDown) {
             cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
             cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-            cameraZoom = utility_3.clamp(-2, cameraZoom, 2.5);
+            cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
         }
         mouseLast = mouseCurrent;
     }, false);
@@ -901,7 +892,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         if (isDown) {
             cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
             cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-            cameraZoom = utility_3.clamp(-2, cameraZoom, 2.5);
+            cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
         }
         mouseLast = mouseCurrent;
     }, false);
@@ -928,35 +919,18 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         var delta = currentTick - lastTick;
         lastTick = currentTick;
         window.requestAnimationFrame(loop);
-        // This says to clear both the color and depth buffers.
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        // We're going to bind our buffer again. We don't have to (it's still bound),
-        // but in the future, we'll be binding more in between, so it's a good habit to put these together,
-        // unless you're really trying to squeeze out performance.
-        gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexBuffer);
-        gl.vertexAttribPointer(vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, triangleColorBuffer);
-        gl.vertexAttribPointer(vertexColorAttribute, 3, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, triangleNormalBuffer);
-        gl.vertexAttribPointer(vertexNormalAttribute, 3, gl.FLOAT, false, 0, 0);
-        // The arguments are, in order:
-        // * the attribute to modify (vertexPositionAttribute)
-        // * the number of items in the array belonging to each vertex (3, it's a 3D point)
-        // * the type of the contents (a floating point number)
-        // * normalization: no effect when type is gl.FLOAT
-        // * stride: size of gap between vertices (for when other data is stored in the buffer too)
-        // * offset: location of first item in buffer (for when other data is stored in the buffer too)
-        // set the perspective
         var near = 0.1;
         var far = 80;
         var cameraDistance = 10 / Math.pow(2, cameraZoom);
         var zoomScale = 2;
-        gl.uniformMatrix4fv(perspectiveUniform, false, [
-            zoomScale, 0, 0, 0,
-            0, zoomScale, 0, 0,
-            0, 0, (near + far) / (near - far), -1,
-            0, 0, near * far / (near - far) * 2, 0,
-        ]);
+        exports.glacier.setUniform({
+            perspective: [
+                zoomScale, 0, 0, 0,
+                0, zoomScale, 0, 0,
+                0, 0, (near + far) / (near - far), -1,
+                0, 0, near * far / (near - far) * 2, 0,
+            ]
+        });
         var t = Date.now() / 1000 / 10;
         var speed = 0.01;
         if (keysDown.w) {
@@ -991,25 +965,24 @@ define("main", ["require", "exports", "generation", "utility", "matrix"], functi
         var right = matrix_1.cross(forward, [0, 1, 0]);
         normalizeSet(right);
         var up = matrix_1.cross(forward, right);
-        gl.uniformMatrix4fv(cameraUniform, false, [
-            right[0], up[0], forward[0], 0,
-            right[1], up[1], forward[1], 0,
-            right[2], up[2], forward[2], 0,
-            0, 0, 0, 1,
-        ]);
-        gl.uniform3f(lightingUniform, light[0], light[1], light[2]);
-        gl.uniform1f(timeUniform, Date.now() / 1000 % 1000);
-        gl.uniformMatrix4fv(cameraPositionUniform, false, [
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            -from[0], -from[1], -from[2], 1,
-        ]);
-        gl.drawArrays(gl.TRIANGLES, 0, worldMesh.count() * 3);
+        exports.glacier.setUniform({
+            camera: [
+                right[0], up[0], forward[0], 0,
+                right[1], up[1], forward[1], 0,
+                right[2], up[2], forward[2], 0,
+                0, 0, 0, 1,
+            ],
+            lightDirection: light,
+            time: Date.now() / 1000 % 1000,
+            cameraPosition: [
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                -from[0], -from[1], -from[2], 1,
+            ]
+        });
+        exports.glacier.draw({ clearColor: [0, 0, 0] });
     }
     loop();
-    function humanize(variable) {
-        return variable.split(/(?=[A-Z])/).join(" ").toLowerCase();
-    }
 });
 //# sourceMappingURL=build.js.map
