@@ -20,46 +20,10 @@ type ProgramSpec = {
 type SurfaceTarget = "screen" | "texture";
 
 type SurfaceTargetData = {
-    "screen": undefined,
-    "texture": {},
-}
+    screen: { type: "screen" },
+    texture: { type: "texture", framebuffer: WebGLFramebuffer, renderBuffer: WebGLRenderbuffer, texture: WebGLTexture },
+};
 
-/// creating a shadow map
-/*
-{
-// screen
-let gl: WebGLRenderingContext = null as any;
-let framebuffer = gl.createFramebuffer();
-
-// depth
-let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
-gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
-gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
-
-// texture
-let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
-gl.bindTexture(gl.TEXTURE_2D, texture);
-gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-
-// assign frame depth
-gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
-gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
-
-// assign frame texture
-gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-
-// now, draw to the frame
-gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-
-// put it back later
-gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-}
-*/
 // TODO: include where it renders to in the type 
 export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTarget> {
     static float: "float" = "float";
@@ -111,6 +75,39 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
         this.specification = options.specification;
         this.gl.enable(this.gl.DEPTH_TEST); // TODO: make this configurable
         this.gl.viewport(0, 0, 600, 600); // TODO: make this configurable
+
+        if (this.target == "target") {
+            let gl = this.gl;
+
+            // screen
+            let framebuffer: WebGLFramebuffer = gl.createFramebuffer()!; // TODO: catch error
+
+            // depth
+            let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
+            gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
+
+            // texture
+            let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+            // assign frame depth
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
+
+            // assign frame texture
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+            this.frameData = {type: "texture", framebuffer, renderBuffer, texture};
+        } else {
+            this.frameData = {type: "screen"};
+        }
     }
     bufferTriangles(triangles: [
         {[attribute in keyof Specification["attributes"]]: ParameterType[Specification["attributes"][attribute]]},
@@ -140,6 +137,12 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
         for (let attribute in this.attributeLocations) {
             this.gl.enableVertexAttribArray(this.attributeLocations[attribute]);
         }
+        if (this.frameData.type == "screen") {
+            // TODO: make this type-safe
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, (this.frameData as {framebuffer: WebGLFramebuffer}).framebuffer);
+        } else {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        }
     }
     deactivate() {
         for (let attribute in this.attributeLocations) {
@@ -156,6 +159,7 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
     private attributeLocations: {[k in keyof Specification["attributes"]]: number};
     private attributeBuffers: {[k in keyof Specification["attributes"]]: WebGLBuffer};
     private uniformLocations: {[k in keyof Specification["uniforms"]]: WebGLUniformLocation};
+    private frameData: SurfaceTargetData[Target];
     setUniform(values: {[name in keyof Specification["uniforms"]]?: ParameterType[Specification["uniforms"][name]]}) {
         for (let uniform in values) {
             // console.log(uniform, this.specification.uniforms[uniform], values[uniform]);

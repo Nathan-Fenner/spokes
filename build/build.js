@@ -422,42 +422,6 @@ export class Mesh<T extends VertexAttributes, Position extends string, Normal ex
 define("glacial", ["require", "exports"], function (require, exports) {
     "use strict";
     exports.__esModule = true;
-    /// creating a shadow map
-    /*
-    {
-    // screen
-    let gl: WebGLRenderingContext = null as any;
-    let framebuffer = gl.createFramebuffer();
-    
-    // depth
-    let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
-    gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
-    
-    // texture
-    let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    
-    // assign frame depth
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
-    
-    // assign frame texture
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-    
-    // now, draw to the frame
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    
-    // put it back later
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    }
-    */
     // TODO: include where it renders to in the type 
     var Glacier = (function () {
         function Glacier(options) {
@@ -496,6 +460,33 @@ define("glacial", ["require", "exports"], function (require, exports) {
             this.specification = options.specification;
             this.gl.enable(this.gl.DEPTH_TEST); // TODO: make this configurable
             this.gl.viewport(0, 0, 600, 600); // TODO: make this configurable
+            if (this.target == "target") {
+                var gl = this.gl;
+                // screen
+                var framebuffer = gl.createFramebuffer(); // TODO: catch error
+                // depth
+                var renderBuffer = gl.createRenderbuffer(); // TODO: catch error
+                gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+                gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
+                // texture
+                var texture = gl.createTexture(); // TODO: catch error
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                // assign frame depth
+                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+                gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
+                // assign frame texture
+                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                this.frameData = { type: "texture", framebuffer: framebuffer, renderBuffer: renderBuffer, texture: texture };
+            }
+            else {
+                this.frameData = { type: "screen" };
+            }
         }
         Glacier.prototype.bufferTriangles = function (triangles) {
             for (var attribute in this.attributeBuffers) {
@@ -523,6 +514,13 @@ define("glacial", ["require", "exports"], function (require, exports) {
             this.gl.useProgram(this.program);
             for (var attribute in this.attributeLocations) {
                 this.gl.enableVertexAttribArray(this.attributeLocations[attribute]);
+            }
+            if (this.frameData.type == "screen") {
+                // TODO: make this type-safe
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.frameData.framebuffer);
+            }
+            else {
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
             }
         };
         Glacier.prototype.deactivate = function () {
