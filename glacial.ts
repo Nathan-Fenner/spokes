@@ -12,12 +12,12 @@ type ParameterSpec = {
     [k: string]: keyof ParameterType;
 }
 
-type ProgramSpec = {
+export type ProgramSpec = {
     uniforms: ParameterSpec,
     attributes: ParameterSpec,
 }
 
-type SurfaceTarget = "screen" | "texture";
+export type SurfaceTarget = "screen" | "texture";
 
 type SurfaceTargetData = {
     screen: { type: "screen" },
@@ -216,4 +216,9 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, this.count * 3);
     }
+}
+
+export function getGlacialTexture<S extends ProgramSpec>(g: Glacier<S, "texture">): WebGLTexture {
+    // TODO: maybe make this typesafe
+    return (g as any).frameData.texture;
 }

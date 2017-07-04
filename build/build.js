@@ -594,6 +594,11 @@ define("glacial", ["require", "exports"], function (require, exports) {
         return Glacier;
     }());
     exports.Glacier = Glacier;
+    function getGlacialTexture(g) {
+        // TODO: maybe make this typesafe
+        return g.frameData.texture;
+    }
+    exports.getGlacialTexture = getGlacialTexture;
 });
 define("main", ["require", "exports", "generation", "utility", "matrix", "glacial"], function (require, exports, generation_1, utility_2, matrix_1, glacial_1) {
     "use strict";
