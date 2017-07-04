@@ -29,6 +29,15 @@ export function add(...us: Vec3[]): Vec3 {
     }
     return sum;
 }
+export function multiply(...us: Vec3[]): Vec3 {
+    let sum: Vec3 = [1, 1, 1];
+    for (let u of us) {
+        sum[0] *= u[0];
+        sum[1] *= u[1];
+        sum[2] *= u[2];
+    }
+    return sum;
+}
 export function plus(u: Vec3, v: Vec3): Vec3 {
     return add(u, v);
 }

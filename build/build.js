@@ -224,6 +224,21 @@ define("matrix", ["require", "exports"], function (require, exports) {
         return sum;
     }
     exports.add = add;
+    function multiply() {
+        var us = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            us[_i] = arguments[_i];
+        }
+        var sum = [1, 1, 1];
+        for (var _a = 0, us_2 = us; _a < us_2.length; _a++) {
+            var u = us_2[_a];
+            sum[0] *= u[0];
+            sum[1] *= u[1];
+            sum[2] *= u[2];
+        }
+        return sum;
+    }
+    exports.multiply = multiply;
     function plus(u, v) {
         return add(u, v);
     }
@@ -407,9 +422,46 @@ export class Mesh<T extends VertexAttributes, Position extends string, Normal ex
 define("glacial", ["require", "exports"], function (require, exports) {
     "use strict";
     exports.__esModule = true;
+    /// creating a shadow map
+    /*
+    {
+    // screen
+    let gl: WebGLRenderingContext = null as any;
+    let framebuffer = gl.createFramebuffer();
+    
+    // depth
+    let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
+    
+    // texture
+    let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    
+    // assign frame depth
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
+    
+    // assign frame texture
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    
+    // now, draw to the frame
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    
+    // put it back later
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    */
     // TODO: include where it renders to in the type 
     var Glacier = (function () {
         function Glacier(options) {
+            this.target = options.target;
             this.count = 0;
             this.gl = options.context;
             this.vertexShader = this.gl.createShader(this.gl.VERTEX_SHADER); // TODO: check error
@@ -596,9 +648,10 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     };
     exports.glacier = new glacial_1.Glacier({
         vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n    attribute float vertexBanding;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n        fragmentBanding = vertexBanding;\n    }\n    ",
-        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n        if (fragmentBanding > 0.94) {\n            gl_FragColor.rgb *= 0.95;\n        }\n        if (fragmentBanding > 0.97) {\n            gl_FragColor.rgb *= 0.9;\n        }\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n    }\n    ",
         specification: specification,
-        context: gl
+        context: gl,
+        target: "screen"
     });
     exports.glacier.activate();
     var light = [2, -2, 2];
@@ -809,45 +862,38 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         var p = _a[_i];
         _loop_2(p);
     }
+    function perspectiveMatrices(options) {
+        // TODO: allow roll
+        var near = options.near, far = options.far, zoom = options.zoom, from = options.from, to = options.to;
+        var forward = matrix_1.unit(matrix_1.subtract(from, to));
+        var right = matrix_1.unit(matrix_1.cross(forward, [0, 1, 0]));
+        var up = matrix_1.cross(forward, right);
+        return {
+            perspective: [
+                zoom, 0, 0, 0,
+                0, zoom, 0, 0,
+                0, 0, (near + far) / (near - far), -1,
+                0, 0, near * far / (near - far) * 2, 0,
+            ],
+            camera: [
+                right[0], up[0], forward[0], 0,
+                right[1], up[1], forward[1], 0,
+                right[2], up[2], forward[2], 0,
+                0, 0, 0, 1,
+            ],
+            cameraPosition: [
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                -from[0], -from[1], -from[2], 1,
+            ]
+        };
+    }
     // worldMesh.smoothAttribute("surface", "vertexColor", 0.01);
     // worldMesh.smoothAttribute("surface", "vertexNormal", 0.01);
     // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
     var worldRendered = meshTriangles; // worldMesh.render();
     exports.glacier.bufferTriangles(worldRendered);
-    function normalizeSet(vec) {
-        var mag = Math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
-        vec[0] /= mag;
-        vec[1] /= mag;
-        vec[2] /= mag;
-    }
-    function scaleSet(u, k) {
-        u[0] *= k;
-        u[1] *= k;
-        u[2] *= k;
-    }
-    function pos() {
-        var r = Math.cos(Date.now() / 100) / 1000 + 6;
-        return [Math.cos(Date.now() / 1000) * r, 0.4, Math.sin(Date.now() / 1000) * r];
-    }
-    var global = {
-        forward: [0, 0, 0],
-        right: [0, 0, 0],
-        up: [0, 0, 0]
-    };
-    function lookAt(from, to) {
-        var forward = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-        normalizeSet(forward);
-        var right = matrix_1.cross(forward, [0, 1, 0]);
-        normalizeSet(right);
-        var up = matrix_1.cross(forward, right);
-        global = { forward: forward, right: right, up: up };
-        return [
-            right[0], up[0], forward[0], -from[0],
-            right[1], up[1], forward[1], -from[1],
-            right[2], up[2], forward[2], -from[2],
-            0, 0, 0, 1,
-        ];
-    }
     var cameraFocus = function () {
         var sum = { x: 0, y: 0 };
         for (var _i = 0, _a = world.heightMap.cells(); _i < _a.length; _i++) {
@@ -922,18 +968,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         var delta = currentTick - lastTick;
         lastTick = currentTick;
         window.requestAnimationFrame(loop);
-        var near = 0.1;
-        var far = 80;
-        var cameraDistance = 10 / Math.pow(2, cameraZoom);
-        var zoomScale = 2;
-        exports.glacier.setUniform({
-            perspective: [
-                zoomScale, 0, 0, 0,
-                0, zoomScale, 0, 0,
-                0, 0, (near + far) / (near - far), -1,
-                0, 0, near * far / (near - far) * 2, 0,
-            ]
-        });
+        var cameraDistance = 5 / Math.pow(2, cameraZoom) + 3;
         var t = Date.now() / 1000 / 10;
         var speed = 0.01;
         if (keysDown.w) {
@@ -954,7 +989,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         }
         var from = [
             Math.cos(cameraViewAngle) * cameraDistance + cameraFocus.x,
-            -3 - 0.5 * cameraDistance,
+            -cameraDistance,
             Math.sin(cameraViewAngle) * cameraDistance + cameraFocus.y,
         ];
         var to = [
@@ -962,27 +997,16 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             0,
             cameraFocus.y,
         ];
-        var forward = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-        normalizeSet(forward); // make it into a unit vector
-        scaleSet(forward, -1);
-        var right = matrix_1.cross(forward, [0, 1, 0]);
-        normalizeSet(right);
+        var forward = matrix_1.unit(matrix_1.subtract(from, to));
+        var right = matrix_1.unit(matrix_1.cross(forward, [0, 1, 0]));
         var up = matrix_1.cross(forward, right);
+        var _a = perspectiveMatrices({ near: 0.1, far: 80, zoom: 2, from: from, to: to }), perspective = _a.perspective, camera = _a.camera, cameraPosition = _a.cameraPosition;
         exports.glacier.setUniform({
-            camera: [
-                right[0], up[0], forward[0], 0,
-                right[1], up[1], forward[1], 0,
-                right[2], up[2], forward[2], 0,
-                0, 0, 0, 1,
-            ],
+            perspective: perspective,
+            camera: camera,
+            cameraPosition: cameraPosition,
             lightDirection: light,
-            time: Date.now() / 1000 % 1000,
-            cameraPosition: [
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                -from[0], -from[1], -from[2], 1,
-            ]
+            time: Date.now() / 1000 % 1000
         });
         exports.glacier.draw({ clearColor: [0, 0, 0] });
     }

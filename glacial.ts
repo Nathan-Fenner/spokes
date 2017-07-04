@@ -17,8 +17,51 @@ type ProgramSpec = {
     attributes: ParameterSpec,
 }
 
+type SurfaceTarget = "screen" | "texture";
+
+type SurfaceTargetData = {
+    "screen": undefined,
+    "texture": {},
+}
+
+/// creating a shadow map
+/*
+{
+// screen
+let gl: WebGLRenderingContext = null as any;
+let framebuffer = gl.createFramebuffer();
+
+// depth
+let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
+gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
+
+// texture
+let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+
+// assign frame depth
+gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
+
+// assign frame texture
+gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+// now, draw to the frame
+gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+// put it back later
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+*/
 // TODO: include where it renders to in the type 
-export class Glacier<Specification extends ProgramSpec> {
+export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTarget> {
     static float: "float" = "float";
     static vec2: "vec2" = "vec2";
     static vec3: "vec3" = "vec3";
@@ -31,7 +74,9 @@ export class Glacier<Specification extends ProgramSpec> {
         vertexShader: string,
         specification: Specification,
         context: WebGLRenderingContext,
+        target: Target,
     }) {
+        this.target = options.target;
         this.count = 0;
         this.gl = options.context;
         this.vertexShader = this.gl.createShader(this.gl.VERTEX_SHADER)!; // TODO: check error
@@ -101,6 +146,7 @@ export class Glacier<Specification extends ProgramSpec> {
             this.gl.disableVertexAttribArray(this.attributeLocations[attribute]);
         }
     }
+    private target: Target;
     private count: number;
     private specification: Specification;
     private gl: WebGLRenderingContext;

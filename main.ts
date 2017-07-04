@@ -3,7 +3,7 @@ import {HexPos, HexMap, generateMap} from './generation'
 
 import {clamp, randomChoose, median, range, distinct, middle} from './utility'
 
-import {Vec3, add, scale, subtract, magnitude, unit, cross} from './matrix'
+import {Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross} from './matrix'
 
 import {Glacier} from './glacial';
 
@@ -73,7 +73,7 @@ let specification = {
     },
 };
 
-export let glacier = new Glacier<typeof specification>({
+export let glacier = new Glacier<typeof specification, "screen">({
     vertexShader: `
     precision mediump float;
     uniform mat4 perspective;
@@ -139,16 +139,17 @@ export let glacier = new Glacier<typeof specification>({
         if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {
             // gl_FragColor.rgb *= 0.75;
         }
-        if (fragmentBanding > 0.94) {
-            gl_FragColor.rgb *= 0.95;
+        if (fragmentBanding > 0.91) {
+            gl_FragColor.rgb *= 0.96;
         }
-        if (fragmentBanding > 0.97) {
-            gl_FragColor.rgb *= 0.9;
+        if (fragmentBanding > 0.95) {
+            gl_FragColor.rgb *= 0.95;
         }
     }
     `,
     specification,
     context: gl,
+    target: "screen",
 });
 
 glacier.activate();
@@ -432,6 +433,34 @@ for (let p of world.heightMap.cells()) {
     }
 }
 
+function perspectiveMatrices(options: {near: number, far: number, zoom: number, from: Vec3, to: Vec3}): {perspective: Mat4, camera: Mat4, cameraPosition: Mat4} {
+    // TODO: allow roll
+    let {near, far, zoom, from, to} = options;
+    let forward = unit(subtract(from, to));
+    let right = unit(cross(forward, [0, 1, 0]));
+    let up = cross(forward, right);
+    return {
+        perspective: [
+            zoom, 0, 0, 0,
+            0, zoom, 0, 0,
+            0, 0, (near+far) / (near-far), -1,
+            0, 0, near*far/(near-far)*2, 0,
+        ],
+        camera: [
+            right[0], up[0], forward[0], 0,
+            right[1], up[1], forward[1], 0,
+            right[2], up[2], forward[2], 0,
+            0, 0, 0, 1,
+        ],
+        cameraPosition: [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            -from[0], -from[1], -from[2], 1,
+        ],
+    };
+}
+
 // worldMesh.smoothAttribute("surface", "vertexColor", 0.01);
 // worldMesh.smoothAttribute("surface", "vertexNormal", 0.01);
 // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
@@ -439,42 +468,6 @@ let worldRendered = meshTriangles; // worldMesh.render();
 
 glacier.bufferTriangles(worldRendered);
 
-function normalizeSet(vec: Vec3) {
-    let mag = Math.sqrt(vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2]);
-    vec[0] /= mag;
-    vec[1] /= mag;
-    vec[2] /= mag;
-}
-
-function scaleSet(u: Vec3, k: number) {
-    u[0] *= k;
-    u[1] *= k;
-    u[2] *= k;
-}
-
-function pos(): Vec3 {
-    let r = Math.cos(Date.now() / 100)/1000 + 6;
-    return [Math.cos(Date.now() / 1000) * r, 0.4, Math.sin(Date.now() / 1000) * r];
-}
-let global = {
-    forward: [0,0,0],
-    right: [0,0,0],
-    up: [0,0,0],
-};
-function lookAt(from: Vec3, to: Vec3): number[] {
-    let forward: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-    normalizeSet(forward);
-    let right = cross(forward, [0, 1, 0]);
-    normalizeSet(right);
-    let up = cross(forward, right);
-    global = {forward, right, up};
-    return [
-        right[0], up[0], forward[0], -from[0],
-        right[1], up[1], forward[1], -from[1],
-        right[2], up[2], forward[2], -from[2],
-        0, 0, 0, 1,
-    ];
-}
 let cameraFocus = function() {
     let sum = {x: 0, y: 0};
     for (let tile of world.heightMap.cells()) {
@@ -550,18 +543,7 @@ function loop() {
     let delta = currentTick - lastTick;
     lastTick = currentTick;
     window.requestAnimationFrame(loop);
-    let near = 0.1;
-    let far = 80;
-    let cameraDistance = 10 / Math.pow(2, cameraZoom);
-    let zoomScale = 2;
-    glacier.setUniform({
-        perspective: [
-            zoomScale, 0, 0, 0,
-            0, zoomScale, 0, 0,
-            0, 0, (near+far) / (near-far), -1,
-            0, 0, near*far/(near-far)*2, 0,
-        ],
-    });
+    let cameraDistance = 5 / Math.pow(2, cameraZoom) + 3;
     let t = Date.now() / 1000 / 10;
 
     let speed = 0.01;
@@ -583,37 +565,27 @@ function loop() {
     }
 
 
-    let from = [
+    let from: Vec3 = [
         Math.cos(cameraViewAngle) * cameraDistance + cameraFocus.x,
-        -3 - 0.5 * cameraDistance,
+        -cameraDistance,
         Math.sin(cameraViewAngle) * cameraDistance + cameraFocus.y,
     ];
-    let to = [
+    let to: Vec3 = [
         cameraFocus.x,
         0,
         cameraFocus.y,
     ];
-    let forward: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-    normalizeSet(forward); // make it into a unit vector
-    scaleSet(forward, -1);
-    let right = cross(forward, [0, 1, 0]);
-    normalizeSet(right);
+    let forward: Vec3 = unit(subtract(from, to));
+    let right = unit(cross(forward, [0, 1, 0]));
     let up = cross(forward, right);
+    let {perspective, camera, cameraPosition} = perspectiveMatrices({near: 0.1, far: 80, zoom: 2, from, to})
     glacier.setUniform({
-        camera: [
-            right[0], up[0], forward[0], 0,
-            right[1], up[1], forward[1], 0,
-            right[2], up[2], forward[2], 0,
-            0, 0, 0, 1,
-        ],
+        perspective,
+        camera,
+        cameraPosition,
         lightDirection: light,
         time: Date.now() / 1000 % 1000,
-        cameraPosition: [
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            -from[0], -from[1], -from[2], 1,
-        ],
+        
     });
     glacier.draw({clearColor: [0, 0, 0]});
 }
