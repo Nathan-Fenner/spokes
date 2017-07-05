@@ -5,7 +5,7 @@ import {clamp, randomChoose, median, range, distinct, middle} from './utility'
 
 import {Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross} from './matrix'
 
-import {Glacier} from './glacial';
+import {Glacier, getGlacialTexture} from './glacial';
 
 let canvas = document.getElementById("canvas") as HTMLCanvasElement;
 canvas.width = 600;
@@ -64,6 +64,12 @@ let specification = {
         camera: Glacier.mat4,
         time: Glacier.float,
         lightDirection: Glacier.vec3,
+        shadowMap: Glacier.image,
+        shadowPerspective: Glacier.mat4,
+        shadowCamera: Glacier.mat4,
+        shadowCameraPosition: Glacier.mat4,
+        source: Glacier.vec3,
+        shift: Glacier.vec2,
     },
     attributes: {
         vertexPosition: Glacier.vec3,
@@ -103,12 +109,24 @@ export let glacier = new Glacier<typeof specification, "screen">({
 
     uniform float time;
     uniform vec3 lightDirection;
+    uniform sampler2D shadowMap;
+
+    uniform mat4 shadowPerspective;
+    uniform mat4 shadowCamera;
+    uniform mat4 shadowCameraPosition;
+    uniform vec3 source;
+
+    uniform vec2 shift;
 
     varying vec3 fragmentPosition;
     varying vec3 fragmentColor;
     varying vec3 fragmentNormal;
     varying float fragmentBanding;
-
+    
+    uniform mat4 perspective;
+    uniform mat4 cameraPosition;
+    uniform mat4 camera;
+    
     float random( vec3 p )
     {
         vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );
@@ -129,6 +147,7 @@ export let glacier = new Glacier<typeof specification, "screen">({
         return s * (1.0 - a);
     }
 
+    
     void main(void) {
         float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
         float noise = random(floor(15.0 * fragmentPosition));
@@ -145,6 +164,18 @@ export let glacier = new Glacier<typeof specification, "screen">({
         if (fragmentBanding > 0.95) {
             gl_FragColor.rgb *= 0.95;
         }
+
+        // shadow map debugging below
+
+        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);
+        vec2 screen = projected.xy / projected.w;
+        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {
+            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;
+            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, source) / 50.0));
+            if (realDistance > shadowDistance + 0.01 || dot(lightDirection  , fragmentNormal) < 0.0) {
+                gl_FragColor.rgb *= 0.5;
+            }
+        }
     }
     `,
     specification,
@@ -153,6 +184,55 @@ export let glacier = new Glacier<typeof specification, "screen">({
 });
 
 glacier.activate();
+
+let shadowSpecification = {
+    uniforms: {
+        perspective: Glacier.mat4,
+        camera: Glacier.mat4,
+        cameraPosition: Glacier.mat4,
+        source: Glacier.vec3,
+    },
+    attributes: {
+        vertexPosition: Glacier.vec3,
+        vertexNormal: Glacier.vec3,
+    },
+};
+
+export let shadowGlacier = new Glacier<typeof shadowSpecification, "texture">({
+    vertexShader: `
+    precision mediump float;
+    uniform mat4 perspective;
+    uniform mat4 cameraPosition;
+    uniform mat4 camera;
+
+    attribute vec3 vertexPosition;
+    attribute vec3 vertexNormal;
+
+    varying vec3 fragmentPosition;
+    varying vec3 fragmentNormal;
+
+    void main(void) {
+        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);
+        fragmentPosition = vertexPosition;
+        fragmentNormal = vertexNormal;
+    }
+    `,
+    fragmentShader: `
+    precision mediump float;
+
+    varying vec3 fragmentPosition;
+    varying vec3 fragmentNormal;
+
+    uniform vec3 source;
+
+    void main(void) {
+        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, source) / 50.0)) * vec3(1.0, 1.0, 1.0), 1.0);
+    }
+    `,
+    specification: shadowSpecification,
+    context: gl,
+    target: "texture",
+});
 
 let light: Vec3 = [2, -2, 2];
 
@@ -174,9 +254,6 @@ function cornerHeightCombine(self: number, hs: number[]): number {
     }
     return self;
 }
-
-// Here we create a regular JS array to store the coordinates of the triangle's corners.
-// The Z component will be 0 for all of them.
 
 let world = generateMap();
 
@@ -467,6 +544,7 @@ function perspectiveMatrices(options: {near: number, far: number, zoom: number, 
 let worldRendered = meshTriangles; // worldMesh.render();
 
 glacier.bufferTriangles(worldRendered);
+shadowGlacier.bufferTriangles(worldRendered); // slices to only take vertexPosition
 
 let cameraFocus = function() {
     let sum = {x: 0, y: 0};
@@ -579,15 +657,34 @@ function loop() {
     let right = unit(cross(forward, [0, 1, 0]));
     let up = cross(forward, right);
     let {perspective, camera, cameraPosition} = perspectiveMatrices({near: 0.1, far: 80, zoom: 2, from, to})
+    let source: Vec3 = [-20, -20, -20];
+    let {perspective: shadowPerspective, camera: shadowCamera, cameraPosition: shadowCameraPosition} = perspectiveMatrices({near: 0.1, far: 70, zoom: 1, from: source, to: [0, 0, 0]});
+    shadowGlacier.activate();
+    shadowGlacier.setUniform({
+        perspective: shadowPerspective,
+        camera: shadowCamera,
+        cameraPosition: shadowCameraPosition,
+        source,
+    });
+    shadowGlacier.draw({clearColor: [0, 0, 0]}); // something is wrong
+    shadowGlacier.deactivate();
+    glacier.activate();
     glacier.setUniform({
         perspective,
         camera,
         cameraPosition,
         lightDirection: light,
         time: Date.now() / 1000 % 1000,
-        
+        shadowMap: {index: 0, texture: getGlacialTexture(shadowGlacier)}, // TODO: sorta spooky
+        shadowPerspective,
+        shadowCamera,
+        shadowCameraPosition,
+        source,
+        shift: (window as any).shift as [number, number] || [0,0],
     });
     glacier.draw({clearColor: [0, 0, 0]});
+    glacier.deactivate();
+    
 }
 
 loop();

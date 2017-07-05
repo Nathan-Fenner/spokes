@@ -1,20 +1,23 @@
 
 import { Vec4, Vec3, Vec2, Mat4 } from './matrix'
 
-type ParameterType = {
+type UniformOnlyType = {
+    "image": {index: number, texture: WebGLTexture},
+};
+
+type SharedType = {
     "vec3": Vec3,
     "vec2": Vec2,
     "mat4": Mat4,
     "float": number,
-}
+};
 
-type ParameterSpec = {
-    [k: string]: keyof ParameterType;
-}
+type UniformType = {[k in keyof (UniformOnlyType & SharedType)]: (UniformOnlyType & SharedType)[k]}
+type AttributeType = SharedType;
 
 export type ProgramSpec = {
-    uniforms: ParameterSpec,
-    attributes: ParameterSpec,
+    uniforms: { [k: string]: keyof UniformType },
+    attributes: { [k: string]: keyof AttributeType },
 }
 
 export type SurfaceTarget = "screen" | "texture";
@@ -33,6 +36,7 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
     static mat2: "mat2" = "mat2";
     static mat3: "mat3" = "mat3";
     static mat4: "mat4" = "mat4";
+    static image: "image" = "image";
     constructor(options: {
         fragmentShader: string,
         vertexShader: string,
@@ -74,9 +78,8 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
         }
         this.specification = options.specification;
         this.gl.enable(this.gl.DEPTH_TEST); // TODO: make this configurable
-        this.gl.viewport(0, 0, 600, 600); // TODO: make this configurable
 
-        if (this.target == "target") {
+        if (this.target == "texture") {
             let gl = this.gl;
 
             // screen
@@ -103,16 +106,18 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
             // assign frame texture
             gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
             gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            this.viewport = [0, 0, 512, 512]; // TODO: make this configurable
 
             this.frameData = {type: "texture", framebuffer, renderBuffer, texture};
         } else {
             this.frameData = {type: "screen"};
+            this.viewport = [0, 0, 600, 600]; // TODO: make this configurable
         }
     }
     bufferTriangles(triangles: [
-        {[attribute in keyof Specification["attributes"]]: ParameterType[Specification["attributes"][attribute]]},
-        {[attribute in keyof Specification["attributes"]]: ParameterType[Specification["attributes"][attribute]]},
-        {[attribute in keyof Specification["attributes"]]: ParameterType[Specification["attributes"][attribute]]}
+        {[attribute in keyof Specification["attributes"]]: AttributeType[Specification["attributes"][attribute]]},
+        {[attribute in keyof Specification["attributes"]]: AttributeType[Specification["attributes"][attribute]]},
+        {[attribute in keyof Specification["attributes"]]: AttributeType[Specification["attributes"][attribute]]}
     ][]) {
         for (let attribute in this.attributeBuffers) {
             let flattened: number[] = [];
@@ -134,14 +139,15 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
     }
     activate() {
         this.gl.useProgram(this.program);
+        let v = this.viewport;
+        this.gl.viewport(v[0], v[1], v[2], v[3]);
         for (let attribute in this.attributeLocations) {
             this.gl.enableVertexAttribArray(this.attributeLocations[attribute]);
         }
         if (this.frameData.type == "screen") {
-            // TODO: make this type-safe
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, (this.frameData as {framebuffer: WebGLFramebuffer}).framebuffer);
-        } else {
             this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        } else {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, (this.frameData as {framebuffer: WebGLFramebuffer}).framebuffer);
         }
     }
     deactivate() {
@@ -160,32 +166,39 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
     private attributeBuffers: {[k in keyof Specification["attributes"]]: WebGLBuffer};
     private uniformLocations: {[k in keyof Specification["uniforms"]]: WebGLUniformLocation};
     private frameData: SurfaceTargetData[Target];
-    setUniform(values: {[name in keyof Specification["uniforms"]]?: ParameterType[Specification["uniforms"][name]]}) {
+    private viewport: Vec4;
+    setUniform(values: {[name in keyof Specification["uniforms"]]?: UniformType[Specification["uniforms"][name]]}) {
         for (let uniform in values) {
-            // console.log(uniform, this.specification.uniforms[uniform], values[uniform]);
             switch (this.specification.uniforms[uniform]) {
                 case "float": {
                     this.gl.uniform1f(this.uniformLocations[uniform], values[uniform] as any);
                     break;
                 }
                 case "vec4": {
-                    let value = values[uniform] as Vec4;
+                    let value = values[uniform] as Vec4; // TODO: typesafe
                     this.gl.uniform4f(this.uniformLocations[uniform], value[0], value[1], value[2], value[3]);
                     break;
                 }
                 case "vec3": {
-                    let value = values[uniform] as Vec3;
+                    let value = values[uniform] as Vec3; // TODO: typesafe
                     this.gl.uniform3f(this.uniformLocations[uniform], value[0], value[1], value[2]);
                     break;
                 }
                 case "vec2": {
-                    let value = values[uniform] as Vec2;
+                    let value = values[uniform] as Vec2; // TODO: typesafe
                     this.gl.uniform2f(this.uniformLocations[uniform], value[0], value[1]);
                     break;
                 }
                 case "mat4": {
-                    let value = values[uniform] as Mat4;
+                    let value = values[uniform] as Mat4; // TODO: typesafe
                     this.gl.uniformMatrix4fv(this.uniformLocations[uniform], false, value);
+                    break;
+                }
+                case "image": {
+                    let value = values[uniform] as {index: number, texture: WebGLTexture}; // TODO: typesafe
+                    this.gl.activeTexture(this.gl.TEXTURE0 + value.index);
+		            this.gl.bindTexture(this.gl.TEXTURE_2D, value.texture);
+                    this.gl.uniform1i(this.uniformLocations[uniform], value.index);
                     break;
                 }
                 default: {

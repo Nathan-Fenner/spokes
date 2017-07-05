@@ -459,8 +459,7 @@ define("glacial", ["require", "exports"], function (require, exports) {
             }
             this.specification = options.specification;
             this.gl.enable(this.gl.DEPTH_TEST); // TODO: make this configurable
-            this.gl.viewport(0, 0, 600, 600); // TODO: make this configurable
-            if (this.target == "target") {
+            if (this.target == "texture") {
                 var gl = this.gl;
                 // screen
                 var framebuffer = gl.createFramebuffer(); // TODO: catch error
@@ -482,10 +481,12 @@ define("glacial", ["require", "exports"], function (require, exports) {
                 // assign frame texture
                 gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
                 gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                this.viewport = [0, 0, 512, 512]; // TODO: make this configurable
                 this.frameData = { type: "texture", framebuffer: framebuffer, renderBuffer: renderBuffer, texture: texture };
             }
             else {
                 this.frameData = { type: "screen" };
+                this.viewport = [0, 0, 600, 600]; // TODO: make this configurable
             }
         }
         Glacier.prototype.bufferTriangles = function (triangles) {
@@ -512,15 +513,16 @@ define("glacial", ["require", "exports"], function (require, exports) {
         };
         Glacier.prototype.activate = function () {
             this.gl.useProgram(this.program);
+            var v = this.viewport;
+            this.gl.viewport(v[0], v[1], v[2], v[3]);
             for (var attribute in this.attributeLocations) {
                 this.gl.enableVertexAttribArray(this.attributeLocations[attribute]);
             }
             if (this.frameData.type == "screen") {
-                // TODO: make this type-safe
-                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.frameData.framebuffer);
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
             }
             else {
-                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.frameData.framebuffer);
             }
         };
         Glacier.prototype.deactivate = function () {
@@ -530,30 +532,36 @@ define("glacial", ["require", "exports"], function (require, exports) {
         };
         Glacier.prototype.setUniform = function (values) {
             for (var uniform in values) {
-                // console.log(uniform, this.specification.uniforms[uniform], values[uniform]);
                 switch (this.specification.uniforms[uniform]) {
                     case "float": {
                         this.gl.uniform1f(this.uniformLocations[uniform], values[uniform]);
                         break;
                     }
                     case "vec4": {
-                        var value = values[uniform];
+                        var value = values[uniform]; // TODO: typesafe
                         this.gl.uniform4f(this.uniformLocations[uniform], value[0], value[1], value[2], value[3]);
                         break;
                     }
                     case "vec3": {
-                        var value = values[uniform];
+                        var value = values[uniform]; // TODO: typesafe
                         this.gl.uniform3f(this.uniformLocations[uniform], value[0], value[1], value[2]);
                         break;
                     }
                     case "vec2": {
-                        var value = values[uniform];
+                        var value = values[uniform]; // TODO: typesafe
                         this.gl.uniform2f(this.uniformLocations[uniform], value[0], value[1]);
                         break;
                     }
                     case "mat4": {
-                        var value = values[uniform];
+                        var value = values[uniform]; // TODO: typesafe
                         this.gl.uniformMatrix4fv(this.uniformLocations[uniform], false, value);
+                        break;
+                    }
+                    case "image": {
+                        var value = values[uniform]; // TODO: typesafe
+                        this.gl.activeTexture(this.gl.TEXTURE0 + value.index);
+                        this.gl.bindTexture(this.gl.TEXTURE_2D, value.texture);
+                        this.gl.uniform1i(this.uniformLocations[uniform], value.index);
                         break;
                     }
                     default: {
@@ -591,6 +599,7 @@ define("glacial", ["require", "exports"], function (require, exports) {
         Glacier.mat2 = "mat2";
         Glacier.mat3 = "mat3";
         Glacier.mat4 = "mat4";
+        Glacier.image = "image";
         return Glacier;
     }());
     exports.Glacier = Glacier;
@@ -640,7 +649,13 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             cameraPosition: glacial_1.Glacier.mat4,
             camera: glacial_1.Glacier.mat4,
             time: glacial_1.Glacier.float,
-            lightDirection: glacial_1.Glacier.vec3
+            lightDirection: glacial_1.Glacier.vec3,
+            shadowMap: glacial_1.Glacier.image,
+            shadowPerspective: glacial_1.Glacier.mat4,
+            shadowCamera: glacial_1.Glacier.mat4,
+            shadowCameraPosition: glacial_1.Glacier.mat4,
+            source: glacial_1.Glacier.vec3,
+            shift: glacial_1.Glacier.vec2
         },
         attributes: {
             vertexPosition: glacial_1.Glacier.vec3,
@@ -651,12 +666,31 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     };
     exports.glacier = new glacial_1.Glacier({
         vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n    attribute float vertexBanding;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n        fragmentBanding = vertexBanding;\n    }\n    ",
-        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform float time;\n    uniform vec3 lightDirection;\n    uniform sampler2D shadowMap;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCamera;\n    uniform mat4 shadowCameraPosition;\n    uniform vec3 source;\n\n    uniform vec2 shift;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n    \n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n    \n    float random( vec3 p )\n    {\n        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );\n        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );\n    }\n    float smoothNoise( vec2 p ) {\n        vec3 f = vec3(floor(p), 1.0);\n        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );\n        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );\n        return mix( f0, f1, fract(p.y) );\n    }\n    float cloudNoise( vec2 x, float f, float a ) {\n        float s = 0.0;\n        for (int i = 0; i < 5; i++) {\n            vec2 arg = x * pow(f, float(i));\n            s += smoothNoise(arg) * pow(a, float(i));\n        }\n        return s * (1.0 - a);\n    }\n\n    \n    void main(void) {\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float noise = random(floor(15.0 * fragmentPosition));\n        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);\n        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {\n            // gl_FragColor.rgb *= 0.75;\n        }\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n\n        // shadow map debugging below\n\n        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n        vec2 screen = projected.xy / projected.w;\n        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, source) / 50.0));\n            if (realDistance > shadowDistance + 0.01 || dot(lightDirection  , fragmentNormal) < 0.0) {\n                gl_FragColor.rgb *= 0.5;\n            }\n        }\n    }\n    ",
         specification: specification,
         context: gl,
         target: "screen"
     });
     exports.glacier.activate();
+    var shadowSpecification = {
+        uniforms: {
+            perspective: glacial_1.Glacier.mat4,
+            camera: glacial_1.Glacier.mat4,
+            cameraPosition: glacial_1.Glacier.mat4,
+            source: glacial_1.Glacier.vec3
+        },
+        attributes: {
+            vertexPosition: glacial_1.Glacier.vec3,
+            vertexNormal: glacial_1.Glacier.vec3
+        }
+    };
+    exports.shadowGlacier = new glacial_1.Glacier({
+        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexNormal;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentNormal;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentNormal = vertexNormal;\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentNormal;\n\n    uniform vec3 source;\n\n    void main(void) {\n        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, source) / 50.0)) * vec3(1.0, 1.0, 1.0), 1.0);\n    }\n    ",
+        specification: shadowSpecification,
+        context: gl,
+        target: "texture"
+    });
     var light = [2, -2, 2];
     // Now, let's create the vertices for our triangle, and send them to the GPU.
     function cornerHeightCombine(self, hs) {
@@ -675,8 +709,6 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         }
         return self;
     }
-    // Here we create a regular JS array to store the coordinates of the triangle's corners.
-    // The Z component will be 0 for all of them.
     var world = generation_1.generateMap();
     var meshTriangles = [];
     function triangleNormal(a, b, c) {
@@ -897,6 +929,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
     var worldRendered = meshTriangles; // worldMesh.render();
     exports.glacier.bufferTriangles(worldRendered);
+    exports.shadowGlacier.bufferTriangles(worldRendered); // slices to only take vertexPosition
     var cameraFocus = function () {
         var sum = { x: 0, y: 0 };
         for (var _i = 0, _a = world.heightMap.cells(); _i < _a.length; _i++) {
@@ -1004,14 +1037,33 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         var right = matrix_1.unit(matrix_1.cross(forward, [0, 1, 0]));
         var up = matrix_1.cross(forward, right);
         var _a = perspectiveMatrices({ near: 0.1, far: 80, zoom: 2, from: from, to: to }), perspective = _a.perspective, camera = _a.camera, cameraPosition = _a.cameraPosition;
+        var source = [-20, -20, -20];
+        var _b = perspectiveMatrices({ near: 0.1, far: 70, zoom: 1, from: source, to: [0, 0, 0] }), shadowPerspective = _b.perspective, shadowCamera = _b.camera, shadowCameraPosition = _b.cameraPosition;
+        exports.shadowGlacier.activate();
+        exports.shadowGlacier.setUniform({
+            perspective: shadowPerspective,
+            camera: shadowCamera,
+            cameraPosition: shadowCameraPosition,
+            source: source
+        });
+        exports.shadowGlacier.draw({ clearColor: [0, 0, 0] }); // something is wrong
+        exports.shadowGlacier.deactivate();
+        exports.glacier.activate();
         exports.glacier.setUniform({
             perspective: perspective,
             camera: camera,
             cameraPosition: cameraPosition,
             lightDirection: light,
-            time: Date.now() / 1000 % 1000
+            time: Date.now() / 1000 % 1000,
+            shadowMap: { index: 0, texture: glacial_1.getGlacialTexture(exports.shadowGlacier) },
+            shadowPerspective: shadowPerspective,
+            shadowCamera: shadowCamera,
+            shadowCameraPosition: shadowCameraPosition,
+            source: source,
+            shift: window.shift || [0, 0]
         });
         exports.glacier.draw({ clearColor: [0, 0, 0] });
+        exports.glacier.deactivate();
     }
     loop();
 });
