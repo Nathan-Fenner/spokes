@@ -183,8 +183,6 @@ export let glacier = new Glacier<typeof specification, "screen">({
     target: "screen",
 });
 
-glacier.activate();
-
 let shadowSpecification = {
     uniforms: {
         perspective: Glacier.mat4,
@@ -194,7 +192,6 @@ let shadowSpecification = {
     },
     attributes: {
         vertexPosition: Glacier.vec3,
-        vertexNormal: Glacier.vec3,
     },
 };
 
@@ -206,22 +203,17 @@ export let shadowGlacier = new Glacier<typeof shadowSpecification, "texture">({
     uniform mat4 camera;
 
     attribute vec3 vertexPosition;
-    attribute vec3 vertexNormal;
-
     varying vec3 fragmentPosition;
-    varying vec3 fragmentNormal;
 
     void main(void) {
         gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);
         fragmentPosition = vertexPosition;
-        fragmentNormal = vertexNormal;
     }
     `,
     fragmentShader: `
     precision mediump float;
 
     varying vec3 fragmentPosition;
-    varying vec3 fragmentNormal;
 
     uniform vec3 source;
 
@@ -544,7 +536,8 @@ function perspectiveMatrices(options: {near: number, far: number, zoom: number, 
 let worldRendered = meshTriangles; // worldMesh.render();
 
 glacier.bufferTriangles(worldRendered);
-shadowGlacier.bufferTriangles(worldRendered); // slices to only take vertexPosition
+let onlyPosition = worldRendered.map(triangle => triangle.map(vertex => ({vertexPosition: vertex.vertexPosition})));
+shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
 
 let cameraFocus = function() {
     let sum = {x: 0, y: 0};
@@ -565,6 +558,10 @@ let isDown = false;
 let mouseEnd = {x: 0, y: 0};
 let mouseLast = {x: 0, y: 0};
 let mouseCurrent = {x: 0, y: 0};
+
+function computeCameraDistance() {
+     return 5 / Math.pow(2, cameraZoom) + 3;
+}
 canvas.addEventListener("mousedown", function(e: MouseEvent) {
     isDown = true;
     mouseStart = {x: e.offsetX, y: e.offsetY};
@@ -583,29 +580,62 @@ document.addEventListener("mouseup", function(e) {
     isDown = false;
     mouseEnd = mouseCurrent;
 }, false);
+let touchData: {[k: string]: {start: {x: number, y: number}, last: {x: number, y: number}}} = {};
 canvas.addEventListener('touchstart', function(e: TouchEvent) {
     e.preventDefault();
-    isDown = true;
-    mouseStart = {x: e.touches[0].clientX, y: e.touches[0].clientY};
-    mouseLast = mouseStart;
-}, false);
-canvas.addEventListener('touchmove', function(e) {
-    mouseCurrent = {x: e.touches[0].clientX, y: e.touches[0].clientY};
-    if (isDown) {
-        cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
-        cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-        cameraZoom = clamp(-2, cameraZoom, 2.5);
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let started = e.changedTouches.item(i)!;
+        touchData[started.identifier] = {
+            start: {x: started.clientX - canvas.clientLeft, y: started.clientY - canvas.clientTop},
+            last: {x: started.clientX - canvas.clientLeft, y: started.clientY - canvas.clientTop},
+        };
     }
-    mouseLast = mouseCurrent;
+});
+canvas.addEventListener('touchend', function(e: TouchEvent) {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let ended = e.changedTouches.item(i)!;
+        delete touchData[ended.identifier];
+    }
+});
+canvas.addEventListener('touchmove', function(e) {
+    let speed = 0.003 * computeCameraDistance();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        let changed = e.changedTouches.item(i);
+        if (changed && changed.identifier in touchData) {
+            let data = touchData[changed.identifier];
+            let position = {x: changed.clientX - canvas.clientLeft, y: changed.clientY - canvas.clientTop};
+            let delta = {x: position.x - data.last.x, y: position.y - data.last.y};
+            let cameraRegion = ({x, y}: {x: number, y: number}) => {
+                let border = 0.15;
+                let minusBorder = 1 - border;
+                return x < canvas.offsetWidth * border || x > canvas.offsetHeight * (1 - border) || y < canvas.offsetHeight * border || y > canvas.offsetHeight * (1 - border);
+            };
+            if (cameraRegion(data.start)) {
+                // move the world
+                cameraFocus.x += Math.sin(cameraViewAngle) * delta.x * speed;
+                cameraFocus.y -= Math.cos(cameraViewAngle) * delta.x * speed;
+
+                cameraFocus.x -= Math.cos(cameraViewAngle) * delta.y * speed;
+                cameraFocus.y -= Math.sin(cameraViewAngle) * delta.y * speed;
+            } else {
+                // move the camera
+                cameraViewAngle -= delta.x * 0.01;
+                cameraZoom -= delta.y * 0.01;
+                cameraZoom = clamp(-2, cameraZoom, 2.5);
+            }
+            data.last = position;
+        }
+    }
 }, false);
-canvas.addEventListener('touchcancel', function(e) {
+/*canvas.addEventListener('touchcancel', function(e) {
     isDown = false;
     e.preventDefault();
 }, false);
 canvas.addEventListener('touchend', function(e) {
     isDown = false;
     e.preventDefault();
-}, false);
+}, false);*/
 let keysDown: {[k: string]: boolean} = {};
 document.addEventListener('keydown', function(e: KeyboardEvent) {
     keysDown[e.key] = true;
@@ -621,7 +651,7 @@ function loop() {
     let delta = currentTick - lastTick;
     lastTick = currentTick;
     window.requestAnimationFrame(loop);
-    let cameraDistance = 5 / Math.pow(2, cameraZoom) + 3;
+    let cameraDistance = computeCameraDistance();
     let t = Date.now() / 1000 / 10;
 
     let speed = 0.01;

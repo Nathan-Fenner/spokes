@@ -22,43 +22,186 @@ canvas {
     <script src="build/build.js"></script>
     <h1>"Spokes"</h1>
     <h2>Controls</h2>
-    <p>You can spin or zoom with the mouse/touch (but I've only tested with Chrome) and pan with WASD.</p>
+    <p><strong>With a mouse and keyboard:</strong> use WASD to pan and click and drag to rotate and zoom.</p>
+    <p><strong>On a phone or tablet:</strong> rotate and zoom by touching the center of the canvas, and pan by grab and dragging the edges.</p>
+    <p>(I've only tested on Chrome)</p>
     <h2>Overview</h2>
     <p>This is a demo of a strategy map generation scheme I'm working on.</p>
-    <p>The lightness of a hex corresponds to its height. The rounded borders between them and the lack of lighting can make this difficult to notice, however.</p>
-    <p>The map is guaranteed to be connected (with no islands) and almost guaranteed to be walkable (over smooth steps only) with some well-understood exceptions that I'm working on fixing.</p>
-    <h2>Generation Algorithm</h2>
-    <p>This is a high-level overview of generation procedure.</p>
-    <h3>Mass Shape</h3>
+    <h2>Development Details</h2>
     <p>
-        The island itself is "grown" from an initial seed of a single hexagon.
-        A cell is randomly chosen, and a uniformly chosen one of its six neighbors is expanded into unless that neighbor was already filled.
-        The process repeats until the desired number of cells have been filled in.
+        This project was written in TypeScript, with no other external dependencies.
+        <a href="https://github.com/Nathan-Fenner/spokes">The source is available here.</a>
+        Note that if you're reading the source, you should skip the <code>.js</code> files and the <code>build/</code> directories.
+        These are generated (except for <code>moduler.js</code>, which is a stub that lets webpack+TS work) and therefore not the source I work with.
     </p>
     <p>
-        If this was all that was done, the shapes would be almost always a nearly uniform blob.
-        So, in addition, I randomly scatter a bunch of "repelling" points across the grid.
-        When "growing" near a repelling point, there's a high chance that the growth will be rejected.
-        This leads to the (usually) interesting shape of the island.
+        The main interface logic and rendering is found in <code>main.ts</code>.
+        The generation code is found in <code>generation.ts</code>.
+        A type-safe (but extremely incomplete) webgl library that I've developed for this project can be found in <code>glacial.ts</code>.
+        Matrix helper functions and type definitions can be found in <code>matrix.ts</code>
+    </p>
+    <h2>Generation Algorithm</h2>
+    <p>
+        Here I talk about what I did, and what I tried but didn't work.
+    </p>
+    <p>
+        The general architecture of the code is as <em>functional</em> as I could make it, within reason.
+        In general, I try to create a piece of data, then pass it into the next step, rather than mutating it in place.
+        This makes the types simpler and reduces the chance of errors or weird behavior.
+        You should consider it too!
+    </p>
+    <h3>Hexagons</h3>
+    <p>
+        Although hexagon terrain has become more popular in strategy games, it's not seen in too many other places.
+        Dealing with square grids seems much easier as a programmer, since they can be obviously built by nesting two arrays.
+        Hexagon grids don't have to be much harder to work with.
+        You just have to build the right tools!
+        In my case, that involved two basic functions:
+        (A) the ability to get the neighbors of a hex position,
+        (B) the ability to take a hex position and map it into a place in the world.
+        There are of course many others that I use, but these two fundamental concepts, once solved, make dealing with hex grids hardly more difficult than dealing with square grids.
+        The main trick is to get used to using them <em>instead of</em> constantly reaching for </code>for (let x = 0; x < width; x++) {...}</code>-style loops.
+        Honestly, you should probably be doing this anway- the abstraction makes it much easier to understand what's going on, so I think it would help just as much, if not more, in projects that deal exclusively with square grids too.
+    </p>
+    <p>
+        Hexagon grids actually <em>can</em> be represented pretty easily using a square grid.
+        All you do is add extra adjacency to each square- the top-right and bottom-left diagonals get connected too.
+        <a href="http://www.redblobgames.com/grids/hexagons/">This is probably the best resource on the internet for games using hexagons.</a>
+        I didn't reference it specifically while working on this project, but it still has the best illustrations of these concepts that I've seen.
+    </p>
+    <h3>Island Shape</h3>
+    <p>
+        The shape of the island (in terms of what is land and what's not) is determined before anything else is done.
+    </p>
+    <p>
+        The island itself is "grown" from an initial seed of a single hexagon.
+        A cell is uniformly chosen, and one of its six neighbors is picked at random.
+        If it's not already used, then that cell is added to the island.
+        This repeats until 
+    </p>
+    <p>
+        If this was all that was done, the island would usually come out as a round blob.
+        In order to get interesting shapes, "avoider" points are randomly scattered near the origin.
+        An "avoider" creates an area of influence around itself.
+        Cells that expand near the influence of an avoider can be rejected, where the generator will start again by choosing another hex to grow from.
+        Avoiders can't completely prevent cells from growing- they can only greatly reduce the probability of growth.
+        This makes it very unlikely that the island will get stuck in this stage.
+        However, this does mean that having lots of avoiders is the same as having none-
+        if everywhere is avoided equally, then there will be no biased introduced so you'll just get a blob again.
     </p>
     <h3>Height</h3>
     <p>
-        Once the shape of the island is determined, the heightmap is built next.
-        Essentially, the heightmap is "grown" much like the mass itself, but within the boundary determined by the island's shape.
-        A random cell is chosen to begin, and given height 2 (though this is arbitrary).
-        Next, cells are randomly chosen, and they "expand" into one of their neighboring cells.
-        The neighbor gets a height which is either the same as, or one more or one less than, the cell it "grew" from.
+        Once the shape of the island has been determined, the heightmap is built.
+        The heightmap is "grown" in a similar manner to the mass itself.
+        Every hex has a height between 0 and 8 (inclusive).
+        One hex is assigned a height to start.
+        From here, hexes are randomly chosen and expand into their neighbors, much like the island's growth.
     </p>
     <p>
-        The precise weights for height change can be varied to adjust how smooth the map is as a whole.
-        In addition, there's a hard cap on the min height (0) and max height (8) of any hex.
-        Hexes assigned heights outside that range are just clamped into it.
+        When a cell expands into an open neighbor (one that hasn't been assigned a height yet),
+        it gives that neighbor a height that's "walkable" from itself.
+        For the purposes of this project, that means that the height is either its own, or one up (+1) or one down (-1) from it.
+        Heights that go out of range (below 0 or above 8) are clamped to be in range.
+    </p>
+    <p>
+        A general smoothness parameter determines how likely it is that the height will vary or stay the same.
+        I've found that high smoothness values (around 80% or so of "stay the same" probability)
+        produces extremely boring, flat maps, so I only use much lower values.
+        I've found that there's not much qualitative difference in maps generated by different smoothness values once you apply the next step.
+    </p>
+    <h3>Smoothing</h3>
+    <p>
+        Terrain generated by the above growing scheme (especially with low smoothness) tends to be very "jagged" or "rough".
+        In particular, there's not a lot of flat, open areas, which tend to be nicer for strategic elements.
+        However, it's important for visual and strategic interest (in this project) that cliff structures still exist.
+        Therefore, I employ a smoothing process which is intended to smooth regions that can be made flatter,
+        without sacrificing large cliffs.
+    </p>
+    <p>
+        The idea is pretty simple.
+        Smoothing occurs in a series of identical passes.
+        Each pass applies a smoothing operation to each hex.
+    </p>
+    <p>
+        Any hex of height <code>h</code> with more neighbors of height <code>h+1</code> than neighbors of height <code>h</code> will become height <code>h+1</code>
+        <em>provided that</em> it doesn't have any neighbors of height <code>h-1</code>.
+        The same is true in the other direction.
+        The condition on having no neighbors in the other direction here is very important:
+        it ensures that smoothing can't introduce discontinuities in the hex grid.
+        In particular, any walkable neighbors of a hex before smoothing will still be walkable neighbors after smoothing. 
+    </p>
+    <p>
+        It's important to note that the converse isn't true.
+        Some hex neighbors that weren't walkable before
+        (in particular, neighbors with height <code>h+2</code> in the above)
+        <em>will</em> become walkable afterwards.
+        Originally, I added this as a restriction to try to protect "interesting" terrain features like cliffs,
+        because I was worried that smoothing would eliminate them.
+        However, this turned out to be unnecessary.
+        Preventing these new neighbors from occuring basically prevents smoothing everywhere, except for a few hexes at the very top or very bottom of the world.
+        In addition (as you can see) there are still plenty of cliffs, mesas, and valleys left behind without it.
     </p>
     <h3>Presentation</h3>
     <p>
-        In order to make it clearer which hexes are supposed to be walkable, they are "smoothed out".
-        The smoothing occurs between any two adjacent hexes whose height differs by 1.
-        Really, this is fairly straightforward; each corner is smoothed independently, and there are only a few cases that need to be considered.
+        The presentation uses WebGL, a web technology for 3D rendering.
+        I didn't use any outside libraries, mostly because I wanted to keep this project fairly small and dependency-free
+        (although I'll admit that TypeScript is a pretty heft dependency, even if it's only for development).
+    </p>
+    <p>
+        Generation assigns each hex an integer height from 0 to 8.
+        In order to make it clearer which hex borders are "walkable",
+        the corners of hexes have their heights adjusted so that walkable hexes share a border.
+    </p>
+    <p>
+        This might sound complicated at first (I thought it was before I tried it), but it's really not.
+        If you take a look at any corner of any hex, you'll see that it's used by 3 hexes.
+        There are really only a few interesting cases!
+    </p>
+    <p>
+        If none of the hexes are walkable, then there's no need to adjust their heights.
+        Similarly if they're all the same, or two are the same and the third is very different.
+    </p>
+    <p> 
+        This leaves only two cases: there is a "staircase" with heights <code>h</code>, <code>h+1</code>, and <code>h+2</code>,
+        or there is a "ramp" with heights <code>h</code>, <code>h</code> and <code>h+1</code> (or vice versa).
+    </p>
+    <p>
+        In the case of a staircase, the corners are all assigned height <code>h+1</code>.
+        This leads to basic connectivity.
+        There's an unfortunate special case that occurs if a <code>h</code> hex is adjacent to a <code>h+2</code> hex,
+        with a <code>h+1</code> hex on both sides- both corners will be brought to height <code>h+1</code> which makes them look like they're walkable!
+        This is essentially remedied by the cliffs that are inserted later, which resolves this issue.
+    </p>
+    <p>
+        In the "ramp" case, things are a lot easier. Any number between <code>h</code> and <code>h+1</code> would work.
+        I tried the average (which is slightly biased towards the majority) as well as the middle (biasing equally towards each)
+        but I eventually settled on the majority (whichever there are more of).
+        The primary reason for this was because it tended to produce flatter land, which I liked the look of.
+    </p>
+    <h3>Graphical Features</h3>
+    <p>
+        Grass and rocks are randomly passed on some hexes to add some visual flair.
+        Each blade of grass is just a couple triangles, and they're arranged in a clump to create some structure.
+        The rocks are just cones embedded into the ground.
+    </p>
+    <p>
+        The much more interesting feature is the cliff walls.
+        Without the stones jutting out of the sides, they look very flat and featureless (because they are!).
+        To fix this, I created the cliff walls.
+        They're not really that complicated if you look closely-
+        each cliff edge gets two boxes to place at random locations along the edge.
+        The boxes have a height that's just a little above the top,
+        and a random width and length for variety.
+        In addition, if the cliff is tall enough (primarily to conserve triangles) there are additional
+        boxes places (with darker colors) lower down on the cliff.
+        To make sure they're visible, they're also much wider.
+        These are mostly noticeable around the outside.
+    </p>
+    <h3>Lighting and Colors</h3>
+    <p>
+        The lighting is purely Lambertian, with a very basic shadow map used to create shadows.
+        At the current moment, the shadow map is using a 512x512 color image to store depth, which leads to very noticeable artifacts.
+        I'm hoping to replace it with a proper 16-bit depth buffer soon.
     </p>
 </body>
 </html>

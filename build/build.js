@@ -671,7 +671,6 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         context: gl,
         target: "screen"
     });
-    exports.glacier.activate();
     var shadowSpecification = {
         uniforms: {
             perspective: glacial_1.Glacier.mat4,
@@ -680,13 +679,12 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             source: glacial_1.Glacier.vec3
         },
         attributes: {
-            vertexPosition: glacial_1.Glacier.vec3,
-            vertexNormal: glacial_1.Glacier.vec3
+            vertexPosition: glacial_1.Glacier.vec3
         }
     };
     exports.shadowGlacier = new glacial_1.Glacier({
-        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexNormal;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentNormal;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentNormal = vertexNormal;\n    }\n    ",
-        fragmentShader: "\n    precision mediump float;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentNormal;\n\n    uniform vec3 source;\n\n    void main(void) {\n        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, source) / 50.0)) * vec3(1.0, 1.0, 1.0), 1.0);\n    }\n    ",
+        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    varying vec3 fragmentPosition;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    varying vec3 fragmentPosition;\n\n    uniform vec3 source;\n\n    void main(void) {\n        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, source) / 50.0)) * vec3(1.0, 1.0, 1.0), 1.0);\n    }\n    ",
         specification: shadowSpecification,
         context: gl,
         target: "texture"
@@ -929,7 +927,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
     var worldRendered = meshTriangles; // worldMesh.render();
     exports.glacier.bufferTriangles(worldRendered);
-    exports.shadowGlacier.bufferTriangles(worldRendered); // slices to only take vertexPosition
+    var onlyPosition = worldRendered.map(function (triangle) { return triangle.map(function (vertex) { return ({ vertexPosition: vertex.vertexPosition }); }); });
+    exports.shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
     var cameraFocus = function () {
         var sum = { x: 0, y: 0 };
         for (var _i = 0, _a = world.heightMap.cells(); _i < _a.length; _i++) {
@@ -948,6 +947,9 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     var mouseEnd = { x: 0, y: 0 };
     var mouseLast = { x: 0, y: 0 };
     var mouseCurrent = { x: 0, y: 0 };
+    function computeCameraDistance() {
+        return 5 / Math.pow(2, cameraZoom) + 3;
+    }
     canvas.addEventListener("mousedown", function (e) {
         isDown = true;
         mouseStart = { x: e.offsetX, y: e.offsetY };
@@ -966,29 +968,63 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         isDown = false;
         mouseEnd = mouseCurrent;
     }, false);
+    var touchData = {};
     canvas.addEventListener('touchstart', function (e) {
         e.preventDefault();
-        isDown = true;
-        mouseStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        mouseLast = mouseStart;
-    }, false);
-    canvas.addEventListener('touchmove', function (e) {
-        mouseCurrent = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        if (isDown) {
-            cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
-            cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-            cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
+        for (var i = 0; i < e.changedTouches.length; i++) {
+            var started = e.changedTouches.item(i);
+            touchData[started.identifier] = {
+                start: { x: started.clientX - canvas.clientLeft, y: started.clientY - canvas.clientTop },
+                last: { x: started.clientX - canvas.clientLeft, y: started.clientY - canvas.clientTop }
+            };
         }
-        mouseLast = mouseCurrent;
-    }, false);
-    canvas.addEventListener('touchcancel', function (e) {
-        isDown = false;
-        e.preventDefault();
-    }, false);
+    });
     canvas.addEventListener('touchend', function (e) {
+        e.preventDefault();
+        for (var i = 0; i < e.changedTouches.length; i++) {
+            var ended = e.changedTouches.item(i);
+            delete touchData[ended.identifier];
+        }
+    });
+    canvas.addEventListener('touchmove', function (e) {
+        var speed = 0.003 * computeCameraDistance();
+        for (var i = 0; i < e.changedTouches.length; i++) {
+            var changed = e.changedTouches.item(i);
+            if (changed && changed.identifier in touchData) {
+                var data = touchData[changed.identifier];
+                var position = { x: changed.clientX - canvas.clientLeft, y: changed.clientY - canvas.clientTop };
+                var delta = { x: position.x - data.last.x, y: position.y - data.last.y };
+                var cameraRegion = function (_a) {
+                    var x = _a.x, y = _a.y;
+                    var border = 0.15;
+                    var minusBorder = 1 - border;
+                    return x < canvas.offsetWidth * border || x > canvas.offsetHeight * (1 - border) || y < canvas.offsetHeight * border || y > canvas.offsetHeight * (1 - border);
+                };
+                if (cameraRegion(data.start)) {
+                    // move the world
+                    cameraFocus.x += Math.sin(cameraViewAngle) * delta.x * speed;
+                    cameraFocus.y -= Math.cos(cameraViewAngle) * delta.x * speed;
+                    cameraFocus.x -= Math.cos(cameraViewAngle) * delta.y * speed;
+                    cameraFocus.y -= Math.sin(cameraViewAngle) * delta.y * speed;
+                }
+                else {
+                    // move the camera
+                    cameraViewAngle -= delta.x * 0.01;
+                    cameraZoom -= delta.y * 0.01;
+                    cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
+                }
+                data.last = position;
+            }
+        }
+    }, false);
+    /*canvas.addEventListener('touchcancel', function(e) {
         isDown = false;
         e.preventDefault();
     }, false);
+    canvas.addEventListener('touchend', function(e) {
+        isDown = false;
+        e.preventDefault();
+    }, false);*/
     var keysDown = {};
     document.addEventListener('keydown', function (e) {
         keysDown[e.key] = true;
@@ -1004,7 +1040,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         var delta = currentTick - lastTick;
         lastTick = currentTick;
         window.requestAnimationFrame(loop);
-        var cameraDistance = 5 / Math.pow(2, cameraZoom) + 3;
+        var cameraDistance = computeCameraDistance();
         var t = Date.now() / 1000 / 10;
         var speed = 0.01;
         if (keysDown.w) {
