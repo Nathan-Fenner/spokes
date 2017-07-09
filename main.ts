@@ -3,7 +3,7 @@ import {HexPos, HexMap, generateMap} from './generation'
 
 import {clamp, randomChoose, median, range, distinct, middle} from './utility'
 
-import {Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross} from './matrix'
+import {Vec2, Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross} from './matrix'
 
 import {Glacier, getGlacialTexture} from './glacial';
 
@@ -62,14 +62,13 @@ let specification = {
         perspective: Glacier.mat4,
         cameraPosition: Glacier.mat4,
         camera: Glacier.mat4,
-        time: Glacier.float,
         lightDirection: Glacier.vec3,
         shadowMap: Glacier.image,
         shadowPerspective: Glacier.mat4,
         shadowCamera: Glacier.mat4,
         shadowCameraPosition: Glacier.mat4,
-        source: Glacier.vec3,
-        shift: Glacier.vec2,
+        shadowScale: Glacier.float,
+        shadowSource: Glacier.vec3,
     },
     attributes: {
         vertexPosition: Glacier.vec3,
@@ -103,61 +102,37 @@ export let glacier = new Glacier<typeof specification, "screen">({
         fragmentNormal = vertexNormal;
         fragmentBanding = vertexBanding;
     }
+
     `,
     fragmentShader: `
     precision mediump float;
-
-    uniform float time;
     uniform vec3 lightDirection;
     uniform sampler2D shadowMap;
 
     uniform mat4 shadowPerspective;
     uniform mat4 shadowCamera;
     uniform mat4 shadowCameraPosition;
-    uniform vec3 source;
-
-    uniform vec2 shift;
+    uniform float shadowScale;
+    uniform vec3 shadowSource;
 
     varying vec3 fragmentPosition;
     varying vec3 fragmentColor;
     varying vec3 fragmentNormal;
     varying float fragmentBanding;
     
-    uniform mat4 perspective;
     uniform mat4 cameraPosition;
-    uniform mat4 camera;
-    
-    float random( vec3 p )
-    {
-        vec3 r = vec3(2.314069263277926,2.665144142690225, -1.4583722432222111 );
-        return fract( cos( mod( 12345678., 256. * dot(p,r) ) ) + cos( mod( 87654321., 256. * dot(p.zyx,r) ) ) );
-    }
-    float smoothNoise( vec2 p ) {
-        vec3 f = vec3(floor(p), 1.0);
-        float f0 = mix( random(f + vec3(0.0, 0.0, 0.0)), random(f + vec3(1.0, 0.0, 0.0)), fract(p.x) );
-        float f1 = mix( random(f + vec3(0.0, 1.0, 0.0)), random(f + vec3(1.0, 1.0, 0.0)), fract(p.x) );
-        return mix( f0, f1, fract(p.y) );
-    }
-    float cloudNoise( vec2 x, float f, float a ) {
-        float s = 0.0;
-        for (int i = 0; i < 5; i++) {
-            vec2 arg = x * pow(f, float(i));
-            s += smoothNoise(arg) * pow(a, float(i));
-        }
-        return s * (1.0 - a);
-    }
-
     
     void main(void) {
+        vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        vec3 eyeDir = normalize(eye - fragmentPosition);
+        if (dot(eyeDir, fragmentNormal) > 0.0) {
+            discard;
+        }
+
         float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
-        float noise = random(floor(15.0 * fragmentPosition));
-        float lambert = dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;
+        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;
         gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
         float originalHeight = fragmentPosition.y * -4.0;
-        float n = cloudNoise(fragmentPosition.xz, 2.0, 0.5);
-        if (fract(originalHeight - 0.4 + (n-0.5)*0.8) < 0.2 && gl_FragColor.g > gl_FragColor.r * 1.3) {
-            // gl_FragColor.rgb *= 0.75;
-        }
         if (fragmentBanding > 0.91) {
             gl_FragColor.rgb *= 0.96;
         }
@@ -165,15 +140,21 @@ export let glacier = new Glacier<typeof specification, "screen">({
             gl_FragColor.rgb *= 0.95;
         }
 
-        // shadow map debugging below
+        // shadows below
 
-        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);
-        vec2 screen = projected.xy / projected.w;
-        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {
-            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;
-            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, source) / 50.0));
-            if (realDistance > shadowDistance + 0.01 || dot(lightDirection  , fragmentNormal) < 0.0) {
-                gl_FragColor.rgb *= 0.5;
+        if (dot(fragmentNormal, lightDirection) > 0.0) {
+            // check before shadow map lookup
+            gl_FragColor.rgb *= 0.5; // shadowed
+        } else {
+            vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);
+            vec2 screen = projected.xy / projected.w;
+            if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {
+                // only place shadows on things within the shadowmap's view
+                float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;
+                float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));
+                if (realDistance > shadowDistance + 0.01) {
+                    gl_FragColor.rgb *= 0.5; // shadowed
+                }
             }
         }
     }
@@ -188,7 +169,8 @@ let shadowSpecification = {
         perspective: Glacier.mat4,
         camera: Glacier.mat4,
         cameraPosition: Glacier.mat4,
-        source: Glacier.vec3,
+        shadowSource: Glacier.vec3,
+        shadowScale: Glacier.float,
     },
     attributes: {
         vertexPosition: Glacier.vec3,
@@ -215,10 +197,11 @@ export let shadowGlacier = new Glacier<typeof shadowSpecification, "texture">({
 
     varying vec3 fragmentPosition;
 
-    uniform vec3 source;
+    uniform vec3 shadowSource;
+    uniform float shadowScale;
 
     void main(void) {
-        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, source) / 50.0)) * vec3(1.0, 1.0, 1.0), 1.0);
+        gl_FragColor = vec4(max(0.0, min(0.99, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0)) * vec3(1.0, 1.0, 1.0), 1.0);
     }
     `,
     specification: shadowSpecification,
@@ -226,7 +209,7 @@ export let shadowGlacier = new Glacier<typeof shadowSpecification, "texture">({
     target: "texture",
 });
 
-let light: Vec3 = [2, -2, 2];
+let lightDirection: Vec3 = unit([2, -4, 2]);
 
 // Now, let's create the vertices for our triangle, and send them to the GPU.
 
@@ -269,8 +252,8 @@ function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec
     let banding = attributes.vertexBanding || 0;
     let normal = triangleNormal(va, vb, vc);
     meshTriangles.push([
-        {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
-        {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
+        {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
+        {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
         {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding}
     ]);
 }
@@ -318,7 +301,7 @@ for (let p of world.heightMap.cells()) {
         // dirt: [0.9, 0.65, 0.35];
         hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8));
 
-        addTriangle([wx, mainHeight, wy], [ax, cornerAHeight, ay], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: 1}, "surface");
+        addTriangle([ax, cornerAHeight, ay], [wx, mainHeight, wy], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: 1}, "surface");
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = hexColor; //  [0.3, 0.4, 0.2]
@@ -381,8 +364,8 @@ for (let p of world.heightMap.cells()) {
                 );
                 // top
                 addQuad(
-                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
                     add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
                     scale(boxWidth, outDir),
                     grassColor,
                 );
@@ -436,8 +419,8 @@ for (let p of world.heightMap.cells()) {
                 );
                 // top
                 addQuad(
-                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
                     add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up), scale(boxLength, wallDir)),
+                    add(topA, scale(-boxWidth/2, outDir), scale(boxHeight, up)),
                     scale(boxWidth, outDir),
                 );
             }// TODO: only conditioned on large difference (save triangles and avoid artifacts)
@@ -499,6 +482,66 @@ for (let p of world.heightMap.cells()) {
                 );
             }
         }
+
+        if (Math.random() < 1/100) {
+            // add a city
+            // first add a large central tower
+            let color: Vec3 = [0.25, 0.25, 0.25];
+            let addPillar = (corners: ((h: number) => Vec3)[], options: {count: number, base: Vec3, peak?: Vec3}) => {
+                let {count, base} = options;
+                let step = 1 / count;
+                for (let h = 0; h <= 1; h += step) {
+                    for (let i = 0; i < corners.length; i++) {
+                        let f1 = (t: number) => options.peak && t >= 1 ? options.peak : corners[i](t);
+                        let f2 = (t: number) => options.peak && t >= 1 ? options.peak : corners[(i+1)%corners.length](t);
+                        addTriangle(
+                            add(base, f2(h)),
+                            add(base, f1(h)),
+                            add(base, f2(h+step)),
+                            {
+                                vertexColor: color,
+                                vertexBanding: 0,
+                            },
+                            "tower",
+                        );
+                        addTriangle(
+                            add(base, f2(h+step)),
+                            add(base, f1(h)),
+                            add(base, f1(h+step)),
+                            {
+                                vertexColor: color,
+                                vertexBanding: 0,
+                            },
+                            "tower",
+                        );
+                    }
+                }
+            };
+            let {wx, wy} = hexToWorld(p);
+            let reheight = (h: number) => -h * 0.25;
+            let mainHeight = reheight(world.heightMap.get(p));
+            let center: Vec3 = [wx, mainHeight, wy];
+            let corners = [
+                (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [+0.4 / (2*h+1), -h*0.7, +0.1 / (h+1)],
+                (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [-0.1 / (h+1), -h*0.7, +0.1 / (h+1)],
+                (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [-0.1 / (h+1), -h*0.7, -0.1 / (h+1)],
+                (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [+0.05 / (h+1), -h*0.7, -0.1 / (h+1)],
+            ];
+            addPillar(corners, {base: center, count: 10});
+            for (let i = 0; i < 7; i++) {
+                let height = 0.4 + (i*3%7) / 12;
+                let cs = [
+                    (h: number): Vec3 => multiply([+0.03, -h * height, -0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
+                    (h: number): Vec3 => multiply([+0.03, -h * height, +0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
+                    (h: number): Vec3 => multiply([-0.03, -h * height, +0.00], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
+                ];
+                addPillar(cs, {
+                    count: 10,
+                    base: add(center, [Math.cos(i/7*Math.PI*2)*0.4, 0, Math.sin(i/7*Math.PI*2)*0.4]),
+                    peak: [0, -(0.4 + (i*3%7) / 12), 0],
+                });
+            }
+        }
     }
 }
 
@@ -538,6 +581,17 @@ let worldRendered = meshTriangles; // worldMesh.render();
 glacier.bufferTriangles(worldRendered);
 let onlyPosition = worldRendered.map(triangle => triangle.map(vertex => ({vertexPosition: vertex.vertexPosition})));
 shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
+
+let meanCenter: Vec3 = function(): Vec3 {
+    let sum = {x: 0, y: 0};
+    for (let tile of world.heightMap.cells()) {
+        sum.x += hexToWorld(tile).wx;
+        sum.y += hexToWorld(tile).wy;
+    }
+    sum.x /= world.heightMap.cells().length;
+    sum.y /= world.heightMap.cells().length;
+    return [sum.x, 0, sum.y];
+}();
 
 let cameraFocus = function() {
     let sum = {x: 0, y: 0};
@@ -628,14 +682,6 @@ canvas.addEventListener('touchmove', function(e) {
         }
     }
 }, false);
-/*canvas.addEventListener('touchcancel', function(e) {
-    isDown = false;
-    e.preventDefault();
-}, false);
-canvas.addEventListener('touchend', function(e) {
-    isDown = false;
-    e.preventDefault();
-}, false);*/
 let keysDown: {[k: string]: boolean} = {};
 document.addEventListener('keydown', function(e: KeyboardEvent) {
     keysDown[e.key] = true;
@@ -652,7 +698,6 @@ function loop() {
     lastTick = currentTick;
     window.requestAnimationFrame(loop);
     let cameraDistance = computeCameraDistance();
-    let t = Date.now() / 1000 / 10;
 
     let speed = 0.01;
     if (keysDown.w) {
@@ -687,30 +732,37 @@ function loop() {
     let right = unit(cross(forward, [0, 1, 0]));
     let up = cross(forward, right);
     let {perspective, camera, cameraPosition} = perspectiveMatrices({near: 0.1, far: 80, zoom: 2, from, to})
-    let source: Vec3 = [-20, -20, -20];
-    let {perspective: shadowPerspective, camera: shadowCamera, cameraPosition: shadowCameraPosition} = perspectiveMatrices({near: 0.1, far: 70, zoom: 1, from: source, to: [0, 0, 0]});
+    let shadowSource: Vec3 = add(meanCenter, scale(70, lightDirection));
+    let shadowScale = 100;
+    let shadowZoom = 2;
+    let {perspective: shadowPerspective, camera: shadowCamera, cameraPosition: shadowCameraPosition} = perspectiveMatrices({near: 0.1, far: shadowScale + 1, zoom: shadowZoom, from: shadowSource, to: meanCenter});
     shadowGlacier.activate();
     shadowGlacier.setUniform({
         perspective: shadowPerspective,
         camera: shadowCamera,
         cameraPosition: shadowCameraPosition,
-        source,
+        shadowSource,
+        shadowScale,
     });
-    shadowGlacier.draw({clearColor: [0, 0, 0]}); // something is wrong
+    shadowGlacier.draw({clearColor: [1, 1, 1]});
     shadowGlacier.deactivate();
     glacier.activate();
+    if ((window as any).debug_shadow) {
+        perspective = shadowPerspective;
+        camera = shadowCamera;
+        cameraPosition = shadowCameraPosition;
+    }
     glacier.setUniform({
         perspective,
         camera,
         cameraPosition,
-        lightDirection: light,
-        time: Date.now() / 1000 % 1000,
+        lightDirection,
         shadowMap: {index: 0, texture: getGlacialTexture(shadowGlacier)}, // TODO: sorta spooky
         shadowPerspective,
         shadowCamera,
         shadowCameraPosition,
-        source,
-        shift: (window as any).shift as [number, number] || [0,0],
+        shadowSource,
+        shadowScale,
     });
     glacier.draw({clearColor: [0, 0, 0]});
     glacier.deactivate();

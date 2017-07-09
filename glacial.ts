@@ -1,6 +1,8 @@
 
 import { Vec4, Vec3, Vec2, Mat4 } from './matrix'
 
+let textureSize = 512;
+
 type UniformOnlyType = {
     "image": {index: number, texture: WebGLTexture},
 };
@@ -57,7 +59,7 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
         this.gl.shaderSource(this.fragmentShader, options.fragmentShader);
         this.gl.compileShader(this.fragmentShader);
         if (!this.gl.getShaderParameter(this.fragmentShader, this.gl.COMPILE_STATUS)) {
-            throw {message: "error loading vertex shader: " + this.gl.getShaderInfoLog(this.fragmentShader)};
+            throw {message: "error loading fragment shader: " + this.gl.getShaderInfoLog(this.fragmentShader)};
         }
         this.program = this.gl.createProgram()!; // TODO: check error
         this.gl.attachShader(this.program, this.vertexShader);
@@ -88,14 +90,14 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
             // depth
             let renderBuffer: WebGLRenderbuffer = gl.createRenderbuffer()!; // TODO: catch error
             gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
-            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 512, 512);
+            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, textureSize, textureSize);
 
             // texture
             let texture: WebGLTexture = gl.createTexture()!; // TODO: catch error
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, textureSize, textureSize, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 
             // assign frame depth
@@ -106,7 +108,7 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
             // assign frame texture
             gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
             gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-            this.viewport = [0, 0, 512, 512]; // TODO: make this configurable
+            this.viewport = [0, 0, textureSize, textureSize]; // TODO: make this configurable
 
             this.frameData = {type: "texture", framebuffer, renderBuffer, texture};
         } else {
