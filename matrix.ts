@@ -70,6 +70,79 @@ type AttributeMap = {
     vec4: null,
     mat4: Mat4,
 };
+
+type PointTree = null | {dimension: 0 | 1 | 2, pivot: Vec3, low: PointTree, high: PointTree};
+
+function find(tree: PointTree, point: Vec3, epsilon: number): Vec3 | null {
+    let stack: PointTree[] = [tree];
+    while (stack.length > 0) {
+        let branch: PointTree = stack.pop()!;
+        if (!branch) {
+            continue;
+        }
+        if (distance(point, branch.pivot) < epsilon) {
+            return branch.pivot;
+        }
+        if (point[branch.dimension] < branch.pivot[branch.dimension] + epsilon) {
+            stack.push(branch.low);
+        }
+        if (point[branch.dimension] > branch.pivot[branch.dimension] - epsilon) {
+            stack.push(branch.high);
+        }
+    }
+    return null;
+}
+function insert(tree: PointTree, point: Vec3): PointTree {
+    if (tree == null) {
+        return {pivot: point, low: null, high: null, dimension: randomChoose<0|1|2>([0, 1, 2])};
+    }
+    if (point[tree.dimension] < tree.pivot[tree.dimension]) {
+        tree.low = insert(tree.low, point);
+    } else {
+        tree.high = insert(tree.high, point);
+    }
+    return tree;
+}
+
+export class PointBunch {
+    identify(p: Vec3): string {
+        let found = find(this.tree, p, this.epsilon);
+        if (found) {
+            return "$" + this.id + found.join(",");
+        }
+        this.tree = insert(this.tree, p);
+        return "$" + this.id + p.join(",");
+    }
+    private id: string;
+    private tree: PointTree;
+    private epsilon: number;
+    constructor(epsilon: number) {
+        this.id = ("" + Math.random()).substr(2,3);
+        this.tree = null;
+        this.epsilon = epsilon;
+    }
+}
+export class PointMap<T> {
+    get(p: Vec3): T {
+        let id = this.bunch.identify(p);
+        if (id in this.map) {
+            return this.map[id];
+        }
+        return this.map[id] = this.maker();
+    }
+    put(p: Vec3, value: T) {
+        let id = this.bunch.identify(p);
+        this.map[id] = value;
+    }
+    constructor(epsilon: number, maker: () => T) {
+        this.maker = maker;
+        this.map = {};
+        this.bunch = new PointBunch(epsilon);
+    }
+    private maker: () => T;
+    private map: {[k: string]: T};
+    private bunch: PointBunch;
+}
 /*
 export type Vertex<T extends {[k: string]: AttributeType}, Position extends string, Normal extends string> = {[k in keyof T]: AttributeMap[T[k]]} & {[k: Position & string]: Vec3}
 

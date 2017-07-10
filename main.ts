@@ -3,7 +3,7 @@ import {HexPos, HexMap, generateMap} from './generation'
 
 import {clamp, randomChoose, median, range, distinct, middle} from './utility'
 
-import {Vec2, Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross} from './matrix'
+import {Vec2, Vec3, Mat4, add, scale, subtract, multiply, magnitude, unit, cross, PointMap} from './matrix'
 
 import {Glacier, getGlacialTexture} from './glacial';
 
@@ -130,7 +130,7 @@ export let glacier = new Glacier<typeof specification, "screen">({
         }
 
         float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));
-        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;
+        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.45 + 0.65;
         gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
         float originalHeight = fragmentPosition.y * -4.0;
         if (fragmentBanding > 0.91) {
@@ -242,7 +242,7 @@ type MeshVertex = {
     vertexBanding: number,
 };
 
-let meshTriangles: [MeshVertex, MeshVertex, MeshVertex][] = [];
+let meshTriangles: {vertices: [MeshVertex, MeshVertex, MeshVertex], metadata: {group?: string}}[] = [];
 
 function triangleNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
     return unit(cross(subtract(b, a), subtract(c, a)));
@@ -251,11 +251,14 @@ function triangleNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
 function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec3, vertexBanding?: number}, group?: string) {
     let banding = attributes.vertexBanding || 0;
     let normal = triangleNormal(va, vb, vc);
-    meshTriangles.push([
-        {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
-        {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
-        {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding}
-    ]);
+    meshTriangles.push({
+        vertices: [
+            {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
+            {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
+            {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding}
+        ],
+        metadata: {group},
+    });
 }
 
 for (let p of world.heightMap.cells()) {
@@ -470,23 +473,23 @@ for (let p of world.heightMap.cells()) {
             let rockX = (dm*wx + da*ax + db*bx) / (dm + da + db);
             let rockY = (dm*wy + da*ay + db*by) / (dm + da + db);
             let rockH = (dm*mainHeight + da*cornerAHeight + db*cornerBHeight) / (dm + da + db);
-            for (let s = 0; s < 7; s++) {
+            for (let s = 0; s < 5; s++) {
                 let h = r;
                 let d = 0.02;
                 addTriangle(
-                    [rockX + Math.cos(s/7*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/7*Math.PI*2)*r],
+                    [rockX + Math.cos(s/5*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/5*Math.PI*2)*r],
                     [rockX, rockH - h, rockY],
-                    [rockX + Math.cos((s+1)/7*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/7*Math.PI*2)*r],
+                    [rockX + Math.cos((s+1)/5*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/5*Math.PI*2)*r],
                     {vertexColor: hexColor.map((x) => x * 0.3 + 0.6)},
                     "rock",
                 );
             }
         }
 
-        if (Math.random() < 1/100) {
+        if (Math.random() < 1/1000) {
             // add a city
             // first add a large central tower
-            let color: Vec3 = [0.25, 0.25, 0.25];
+            let color: Vec3 = [0.95, 0.85, 0.75];
             let addPillar = (corners: ((h: number) => Vec3)[], options: {count: number, base: Vec3, peak?: Vec3}) => {
                 let {count, base} = options;
                 let step = 1 / count;
@@ -526,19 +529,47 @@ for (let p of world.heightMap.cells()) {
                 (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [-0.1 / (h+1), -h*0.7, +0.1 / (h+1)],
                 (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [-0.1 / (h+1), -h*0.7, -0.1 / (h+1)],
                 (h: number): Vec3 => h >= 1 ? [0, -h*1.0, 0] : [+0.05 / (h+1), -h*0.7, -0.1 / (h+1)],
-            ];
-            addPillar(corners, {base: center, count: 10});
-            for (let i = 0; i < 7; i++) {
-                let height = 0.4 + (i*3%7) / 12;
+            ].map((f) => (x: number) => multiply([0.5, 1, 0.5], f(x)));
+            addPillar(corners, {base: center, count: 5});
+            for (let i = 0; i < 5; i++) {
+                let height = 0.4 + (i*2%5) / 12;
                 let cs = [
                     (h: number): Vec3 => multiply([+0.03, -h * height, -0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
                     (h: number): Vec3 => multiply([+0.03, -h * height, +0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
                     (h: number): Vec3 => multiply([-0.03, -h * height, +0.00], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]),
                 ];
                 addPillar(cs, {
-                    count: 10,
-                    base: add(center, [Math.cos(i/7*Math.PI*2)*0.4, 0, Math.sin(i/7*Math.PI*2)*0.4]),
-                    peak: [0, -(0.4 + (i*3%7) / 12), 0],
+                    count: 4,
+                    base: add(center, [Math.cos(i/5*Math.PI*2-0.5)*0.2, 0, Math.sin(i/5*Math.PI*2-0.5)*0.2]),
+                    peak: [0, -(0.4 + (i*3%5) / 12), 0],
+                });
+            }
+            for (let i = 0; i < 10; i++) {
+                let t = i / 10;
+                let tw = 0.023;
+                let th = 0.25;
+                let top = 0.15;
+                let r = 0.45;
+                if (i % 2 == 0) {
+                    top *= 2;
+                    tw *= 2;
+                    th *= 0.4;
+                    r *= 1.09;
+                }
+                let angle = Math.PI*2 * t;
+                // vectors
+                let out: Vec3 = [Math.cos(angle), 0, Math.sin(angle)];
+                let right: Vec3 = [-Math.sin(angle), 0, Math.cos(angle)];
+                let cs = [
+                    (h: number): Vec3 => add([0,-h*top,0], scale(tw, out), scale(th, right)),
+                    (h: number): Vec3 => add([0,-h*top,0], scale(-tw, out), scale(th, right)),
+                    (h: number): Vec3 => add([0,-h*top,0], scale(-tw, out), scale(-th, right)),
+                    (h: number): Vec3 => add([0,-h*top,0], scale(tw, out), scale(-th, right)),
+                ];
+                addPillar(cs, {
+                    count: 2,
+                    base: add(center, [Math.cos(angle)*r, 0, Math.sin(angle)*r]),
+                    peak: [0, -top*1/2, 0],
                 });
             }
         }
@@ -573,13 +604,30 @@ function perspectiveMatrices(options: {near: number, far: number, zoom: number, 
     };
 }
 
-// worldMesh.smoothAttribute("surface", "vertexColor", 0.01);
-// worldMesh.smoothAttribute("surface", "vertexNormal", 0.01);
-// worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
-let worldRendered = meshTriangles; // worldMesh.render();
+// let's smooth the normals
 
-glacier.bufferTriangles(worldRendered);
-let onlyPosition = worldRendered.map(triangle => triangle.map(vertex => ({vertexPosition: vertex.vertexPosition})));
+let normalSmoother = new PointMap<Vec3[]>(0.01, () => []);
+for (let triangle of meshTriangles) {
+    if (triangle.metadata.group != "surface") {
+        continue;
+    }
+    for (let vertex of triangle.vertices) {
+        // this is a little odd
+        normalSmoother.get(vertex.vertexPosition).push(vertex.vertexNormal);
+    }
+}
+// smooth the normals:
+for (let triangle of meshTriangles) {
+    if (triangle.metadata.group != "surface") {
+        continue;
+    }
+    for (let vertex of triangle.vertices) {
+        vertex.vertexNormal = unit(add(...normalSmoother.get(vertex.vertexPosition)));
+    }
+}
+
+glacier.bufferTriangles(meshTriangles.map((x) => x.vertices));
+let onlyPosition = meshTriangles.map(triangle => triangle.vertices.map(vertex => ({vertexPosition: vertex.vertexPosition})));
 shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
 
 let meanCenter: Vec3 = function(): Vec3 {

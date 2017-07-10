@@ -198,7 +198,7 @@ define("generation", ["require", "exports", "utility"], function (require, expor
     }
     exports.generateMap = generateMap;
 });
-define("matrix", ["require", "exports"], function (require, exports) {
+define("matrix", ["require", "exports", "utility"], function (require, exports, utility_2) {
     "use strict";
     exports.__esModule = true;
     function cross(u, v) {
@@ -267,6 +267,74 @@ define("matrix", ["require", "exports"], function (require, exports) {
         return scale(1 / magnitude(v), v);
     }
     exports.unit = unit;
+    function find(tree, point, epsilon) {
+        var stack = [tree];
+        while (stack.length > 0) {
+            var branch = stack.pop();
+            if (!branch) {
+                continue;
+            }
+            if (distance(point, branch.pivot) < epsilon) {
+                return branch.pivot;
+            }
+            if (point[branch.dimension] < branch.pivot[branch.dimension] + epsilon) {
+                stack.push(branch.low);
+            }
+            if (point[branch.dimension] > branch.pivot[branch.dimension] - epsilon) {
+                stack.push(branch.high);
+            }
+        }
+        return null;
+    }
+    function insert(tree, point) {
+        if (tree == null) {
+            return { pivot: point, low: null, high: null, dimension: utility_2.randomChoose([0, 1, 2]) };
+        }
+        if (point[tree.dimension] < tree.pivot[tree.dimension]) {
+            tree.low = insert(tree.low, point);
+        }
+        else {
+            tree.high = insert(tree.high, point);
+        }
+        return tree;
+    }
+    var PointBunch = (function () {
+        function PointBunch(epsilon) {
+            this.id = ("" + Math.random()).substr(2, 3);
+            this.tree = null;
+            this.epsilon = epsilon;
+        }
+        PointBunch.prototype.identify = function (p) {
+            var found = find(this.tree, p, this.epsilon);
+            if (found) {
+                return "$" + this.id + found.join(",");
+            }
+            this.tree = insert(this.tree, p);
+            return "$" + this.id + p.join(",");
+        };
+        return PointBunch;
+    }());
+    exports.PointBunch = PointBunch;
+    var PointMap = (function () {
+        function PointMap(epsilon, maker) {
+            this.maker = maker;
+            this.map = {};
+            this.bunch = new PointBunch(epsilon);
+        }
+        PointMap.prototype.get = function (p) {
+            var id = this.bunch.identify(p);
+            if (id in this.map) {
+                return this.map[id];
+            }
+            return this.map[id] = this.maker();
+        };
+        PointMap.prototype.put = function (p, value) {
+            var id = this.bunch.identify(p);
+            this.map[id] = value;
+        };
+        return PointMap;
+    }());
+    exports.PointMap = PointMap;
 });
 /*
 export type Vertex<T extends {[k: string]: AttributeType}, Position extends string, Normal extends string> = {[k in keyof T]: AttributeMap[T[k]]} & {[k: Position & string]: Vec3}
@@ -610,7 +678,7 @@ define("glacial", ["require", "exports"], function (require, exports) {
     }
     exports.getGlacialTexture = getGlacialTexture;
 });
-define("main", ["require", "exports", "generation", "utility", "matrix", "glacial"], function (require, exports, generation_1, utility_2, matrix_1, glacial_1) {
+define("main", ["require", "exports", "generation", "utility", "matrix", "glacial"], function (require, exports, generation_1, utility_3, matrix_1, glacial_1) {
     "use strict";
     exports.__esModule = true;
     var canvas = document.getElementById("canvas");
@@ -666,7 +734,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     };
     exports.glacier = new glacial_1.Glacier({
         vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n    attribute float vertexBanding;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n        fragmentBanding = vertexBanding;\n    }\n\n    ",
-        fragmentShader: "\n    precision mediump float;\n    uniform vec3 lightDirection;\n    uniform sampler2D shadowMap;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCamera;\n    uniform mat4 shadowCameraPosition;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n    \n    uniform mat4 cameraPosition;\n    \n    void main(void) {\n        vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;\n        vec3 eyeDir = normalize(eye - fragmentPosition);\n        if (dot(eyeDir, fragmentNormal) > 0.0) {\n            discard;\n        }\n\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.35 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n\n        // shadows below\n\n        if (dot(fragmentNormal, lightDirection) > 0.0) {\n            // check before shadow map lookup\n            gl_FragColor.rgb *= 0.5; // shadowed\n        } else {\n            vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n            vec2 screen = projected.xy / projected.w;\n            if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n                // only place shadows on things within the shadowmap's view\n                float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n                float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n                if (realDistance > shadowDistance + 0.01) {\n                    gl_FragColor.rgb *= 0.5; // shadowed\n                }\n            }\n        }\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n    uniform vec3 lightDirection;\n    uniform sampler2D shadowMap;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCamera;\n    uniform mat4 shadowCameraPosition;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n    \n    uniform mat4 cameraPosition;\n    \n    void main(void) {\n        vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;\n        vec3 eyeDir = normalize(eye - fragmentPosition);\n        if (dot(eyeDir, fragmentNormal) > 0.0) {\n            discard;\n        }\n\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.45 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n\n        // shadows below\n\n        if (dot(fragmentNormal, lightDirection) > 0.0) {\n            // check before shadow map lookup\n            gl_FragColor.rgb *= 0.5; // shadowed\n        } else {\n            vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n            vec2 screen = projected.xy / projected.w;\n            if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n                // only place shadows on things within the shadowmap's view\n                float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n                float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n                if (realDistance > shadowDistance + 0.01) {\n                    gl_FragColor.rgb *= 0.5; // shadowed\n                }\n            }\n        }\n    }\n    ",
         specification: specification,
         context: gl,
         target: "screen"
@@ -693,14 +761,14 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     var lightDirection = matrix_1.unit([2, -4, 2]);
     // Now, let's create the vertices for our triangle, and send them to the GPU.
     function cornerHeightCombine(self, hs) {
-        if (utility_2.range([self].concat(hs)) == 1) {
-            return utility_2.median([self].concat(hs));
+        if (utility_3.range([self].concat(hs)) == 1) {
+            return utility_3.median([self].concat(hs));
         }
-        if (hs.length == 2 && utility_2.range([self].concat(hs)) == 2 && utility_2.distinct([self].concat(hs))) {
-            return utility_2.middle([self].concat(hs));
+        if (hs.length == 2 && utility_3.range([self].concat(hs)) == 2 && utility_3.distinct([self].concat(hs))) {
+            return utility_3.middle([self].concat(hs));
         }
         if (hs.length == 2 && hs.filter(function (x) { return Math.abs(x - self) <= 1; }).length == 2) {
-            return utility_2.middle([self].concat(hs));
+            return utility_3.middle([self].concat(hs));
         }
         if (hs.length == 2) {
             var nearby = hs.filter(function (x) { return Math.abs(x - self) <= 1; });
@@ -716,15 +784,18 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     function addTriangle(va, vb, vc, attributes, group) {
         var banding = attributes.vertexBanding || 0;
         var normal = triangleNormal(va, vb, vc);
-        meshTriangles.push([
-            { vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding },
-            { vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0 },
-            { vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding }
-        ]);
+        meshTriangles.push({
+            vertices: [
+                { vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding },
+                { vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0 },
+                { vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding }
+            ],
+            metadata: { group: group }
+        });
     }
     var _loop_2 = function (p) {
         var cs = hexCorners(p);
-        var bladeCount = 30 * utility_2.randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
+        var bladeCount = 30 * utility_3.randomChoose([0, 0, 0, 1, 1 / 8, 1 / 8, 1 / 20]);
         var corners = [];
         var neighbors = p.neighbors();
         for (var i = 0; i < 6; i++) {
@@ -881,16 +952,16 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
                 var rockX = (dm * wx + da * ax + db * bx) / (dm + da + db);
                 var rockY = (dm * wy + da * ay + db * by) / (dm + da + db);
                 var rockH = (dm * mainHeight + da * cornerAHeight + db * cornerBHeight) / (dm + da + db);
-                for (var s = 0; s < 7; s++) {
+                for (var s = 0; s < 5; s++) {
                     var h = r;
                     var d = 0.02;
-                    addTriangle([rockX + Math.cos(s / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 7 * Math.PI * 2) * r], [rockX, rockH - h, rockY], [rockX + Math.cos((s + 1) / 7 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 7 * Math.PI * 2) * r], { vertexColor: hexColor.map(function (x) { return x * 0.3 + 0.6; }) }, "rock");
+                    addTriangle([rockX + Math.cos(s / 5 * Math.PI * 2) * r, rockH + d, rockY + Math.sin(s / 5 * Math.PI * 2) * r], [rockX, rockH - h, rockY], [rockX + Math.cos((s + 1) / 5 * Math.PI * 2) * r, rockH + d, rockY + Math.sin((s + 1) / 5 * Math.PI * 2) * r], { vertexColor: hexColor.map(function (x) { return x * 0.3 + 0.6; }) }, "rock");
                 }
             }
-            if (Math.random() < 1 / 100) {
+            if (Math.random() < 1 / 1000) {
                 // add a city
                 // first add a large central tower
-                var color_1 = [0.25, 0.25, 0.25];
+                var color_1 = [0.95, 0.85, 0.75];
                 var addPillar = function (corners, options) {
                     var count = options.count, base = options.base;
                     var step = 1 / count;
@@ -921,23 +992,54 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
                     function (h) { return h >= 1 ? [0, -h * 1.0, 0] : [-0.1 / (h + 1), -h * 0.7, +0.1 / (h + 1)]; },
                     function (h) { return h >= 1 ? [0, -h * 1.0, 0] : [-0.1 / (h + 1), -h * 0.7, -0.1 / (h + 1)]; },
                     function (h) { return h >= 1 ? [0, -h * 1.0, 0] : [+0.05 / (h + 1), -h * 0.7, -0.1 / (h + 1)]; },
-                ];
-                addPillar(corners_1, { base: center, count: 10 });
+                ].map(function (f) { return function (x) { return matrix_1.multiply([0.5, 1, 0.5], f(x)); }; });
+                addPillar(corners_1, { base: center, count: 5 });
                 var _loop_7 = function (i_3) {
-                    var height = 0.4 + (i_3 * 3 % 7) / 12;
+                    var height = 0.4 + (i_3 * 2 % 5) / 12;
                     var cs_1 = [
                         function (h) { return matrix_1.multiply([+0.03, -h * height, -0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]); },
                         function (h) { return matrix_1.multiply([+0.03, -h * height, +0.03], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]); },
                         function (h) { return matrix_1.multiply([-0.03, -h * height, +0.00], Math.abs(h - 0.5) < 0.2 / height ? [1, 1, 1] : [2, 1, 2]); },
                     ];
                     addPillar(cs_1, {
-                        count: 10,
-                        base: matrix_1.add(center, [Math.cos(i_3 / 7 * Math.PI * 2) * 0.4, 0, Math.sin(i_3 / 7 * Math.PI * 2) * 0.4]),
-                        peak: [0, -(0.4 + (i_3 * 3 % 7) / 12), 0]
+                        count: 4,
+                        base: matrix_1.add(center, [Math.cos(i_3 / 5 * Math.PI * 2 - 0.5) * 0.2, 0, Math.sin(i_3 / 5 * Math.PI * 2 - 0.5) * 0.2]),
+                        peak: [0, -(0.4 + (i_3 * 3 % 5) / 12), 0]
                     });
                 };
-                for (var i_3 = 0; i_3 < 7; i_3++) {
+                for (var i_3 = 0; i_3 < 5; i_3++) {
                     _loop_7(i_3);
+                }
+                var _loop_8 = function (i_4) {
+                    var t = i_4 / 10;
+                    var tw = 0.023;
+                    var th = 0.25;
+                    var top_1 = 0.15;
+                    var r = 0.45;
+                    if (i_4 % 2 == 0) {
+                        top_1 *= 2;
+                        tw *= 2;
+                        th *= 0.4;
+                        r *= 1.09;
+                    }
+                    var angle = Math.PI * 2 * t;
+                    // vectors
+                    var out = [Math.cos(angle), 0, Math.sin(angle)];
+                    var right = [-Math.sin(angle), 0, Math.cos(angle)];
+                    var cs_2 = [
+                        function (h) { return matrix_1.add([0, -h * top_1, 0], matrix_1.scale(tw, out), matrix_1.scale(th, right)); },
+                        function (h) { return matrix_1.add([0, -h * top_1, 0], matrix_1.scale(-tw, out), matrix_1.scale(th, right)); },
+                        function (h) { return matrix_1.add([0, -h * top_1, 0], matrix_1.scale(-tw, out), matrix_1.scale(-th, right)); },
+                        function (h) { return matrix_1.add([0, -h * top_1, 0], matrix_1.scale(tw, out), matrix_1.scale(-th, right)); },
+                    ];
+                    addPillar(cs_2, {
+                        count: 2,
+                        base: matrix_1.add(center, [Math.cos(angle) * r, 0, Math.sin(angle) * r]),
+                        peak: [0, -top_1 * 1 / 2, 0]
+                    });
+                };
+                for (var i_4 = 0; i_4 < 10; i_4++) {
+                    _loop_8(i_4);
                 }
             }
         };
@@ -976,12 +1078,32 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             ]
         };
     }
-    // worldMesh.smoothAttribute("surface", "vertexColor", 0.01);
-    // worldMesh.smoothAttribute("surface", "vertexNormal", 0.01);
-    // worldMesh.smoothAttribute("rock", "vertexNormal", 0.1);
-    var worldRendered = meshTriangles; // worldMesh.render();
-    exports.glacier.bufferTriangles(worldRendered);
-    var onlyPosition = worldRendered.map(function (triangle) { return triangle.map(function (vertex) { return ({ vertexPosition: vertex.vertexPosition }); }); });
+    // let's smooth the normals
+    var normalSmoother = new matrix_1.PointMap(0.01, function () { return []; });
+    for (var _b = 0, meshTriangles_1 = meshTriangles; _b < meshTriangles_1.length; _b++) {
+        var triangle = meshTriangles_1[_b];
+        if (triangle.metadata.group != "surface") {
+            continue;
+        }
+        for (var _c = 0, _d = triangle.vertices; _c < _d.length; _c++) {
+            var vertex = _d[_c];
+            // this is a little odd
+            normalSmoother.get(vertex.vertexPosition).push(vertex.vertexNormal);
+        }
+    }
+    // smooth the normals:
+    for (var _e = 0, meshTriangles_2 = meshTriangles; _e < meshTriangles_2.length; _e++) {
+        var triangle = meshTriangles_2[_e];
+        if (triangle.metadata.group != "surface") {
+            continue;
+        }
+        for (var _f = 0, _g = triangle.vertices; _f < _g.length; _f++) {
+            var vertex = _g[_f];
+            vertex.vertexNormal = matrix_1.unit(matrix_1.add.apply(void 0, normalSmoother.get(vertex.vertexPosition)));
+        }
+    }
+    exports.glacier.bufferTriangles(meshTriangles.map(function (x) { return x.vertices; }));
+    var onlyPosition = meshTriangles.map(function (triangle) { return triangle.vertices.map(function (vertex) { return ({ vertexPosition: vertex.vertexPosition }); }); });
     exports.shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
     var meanCenter = function () {
         var sum = { x: 0, y: 0 };
@@ -1025,7 +1147,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         if (isDown) {
             cameraViewAngle -= (mouseCurrent.x - mouseLast.x) * 0.01;
             cameraZoom -= (mouseCurrent.y - mouseLast.y) * 0.01;
-            cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
+            cameraZoom = utility_3.clamp(-2, cameraZoom, 2.5);
         }
         mouseLast = mouseCurrent;
     }, false);
@@ -1076,7 +1198,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
                     // move the camera
                     cameraViewAngle -= delta.x * 0.01;
                     cameraZoom -= delta.y * 0.01;
-                    cameraZoom = utility_2.clamp(-2, cameraZoom, 2.5);
+                    cameraZoom = utility_3.clamp(-2, cameraZoom, 2.5);
                 }
                 data.last = position;
             }
