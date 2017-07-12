@@ -116,6 +116,19 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
             this.viewport = [0, 0, 600, 600]; // TODO: make this configurable
         }
     }
+    loadTexture(src: string, callback: () => void): WebGLTexture {
+        let image = new Image();
+        let texture: WebGLTexture = this.gl.createTexture()!; // TODO: error 
+        image.src = src;
+        image.onload = () => {
+            this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+            this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+	        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+            callback();
+        };
+        return texture;
+    }
     bufferTriangles(triangles: [
         {[attribute in keyof Specification["attributes"]]: AttributeType[Specification["attributes"][attribute]]},
         {[attribute in keyof Specification["attributes"]]: AttributeType[Specification["attributes"][attribute]]},
@@ -209,11 +222,11 @@ export class Glacier<Specification extends ProgramSpec, Target extends SurfaceTa
             }
         }
     }
-    draw(options: {clearColor?: [number, number, number]} = {}) {
-        if (options.clearColor) {
+    draw(options: {clearColor: "no-clear" | [number, number, number]}) {
+        if (options.clearColor && options.clearColor != "no-clear") {
             this.gl.clearColor(options.clearColor[0], options.clearColor[1], options.clearColor[2], 1);
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         }
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         // assign each buffer to its attribute
         let sizeof = {
             float: 1,

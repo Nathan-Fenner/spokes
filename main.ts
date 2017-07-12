@@ -69,6 +69,7 @@ let specification = {
         shadowCameraPosition: Glacier.mat4,
         shadowScale: Glacier.float,
         shadowSource: Glacier.vec3,
+        noiseTexture: Glacier.image,
     },
     attributes: {
         vertexPosition: Glacier.vec3,
@@ -107,13 +108,13 @@ export let glacier = new Glacier<typeof specification, "screen">({
     fragmentShader: `
     precision mediump float;
     uniform vec3 lightDirection;
-    uniform sampler2D shadowMap;
 
     uniform mat4 shadowPerspective;
     uniform mat4 shadowCamera;
     uniform mat4 shadowCameraPosition;
     uniform float shadowScale;
     uniform vec3 shadowSource;
+    uniform sampler2D shadowMap;
 
     varying vec3 fragmentPosition;
     varying vec3 fragmentColor;
@@ -121,6 +122,8 @@ export let glacier = new Glacier<typeof specification, "screen">({
     varying float fragmentBanding;
     
     uniform mat4 cameraPosition;
+
+    uniform sampler2D noiseTexture;
     
     void main(void) {
         vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -157,11 +160,22 @@ export let glacier = new Glacier<typeof specification, "screen">({
                 }
             }
         }
+
+        // TODO: fewer texture samples here
+        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xz * 0.1).r);
+        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xy * vec2(0.05, 0.5)).r);
+        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.zy * vec2(0.05, 0.5)).r);
     }
     `,
     specification,
     context: gl,
     target: "screen",
+});
+
+let noiseAvailable = false;
+let noiseTexture: WebGLTexture = glacier.loadTexture("noise.png", () => {
+    noiseAvailable = true;
+    console.log("loaded");
 });
 
 let shadowSpecification = {
@@ -207,6 +221,119 @@ export let shadowGlacier = new Glacier<typeof shadowSpecification, "texture">({
     specification: shadowSpecification,
     context: gl,
     target: "texture",
+});
+
+
+let waterSpecification = {
+    uniforms: {
+        perspective: Glacier.mat4,
+        camera: Glacier.mat4,
+        cameraPosition: Glacier.mat4,
+        noiseTexture: Glacier.image,
+        eyeLocation: Glacier.vec3,
+        lightDirection: Glacier.vec3,
+        time: Glacier.float,
+
+        shadowMap: Glacier.image,
+        shadowPerspective: Glacier.mat4,
+        shadowCamera: Glacier.mat4,
+        shadowCameraPosition: Glacier.mat4,
+        shadowScale: Glacier.float,
+        shadowSource: Glacier.vec3,
+    },
+    attributes: {
+        vertexPosition: Glacier.vec3,
+    },
+};
+
+let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
+    vertexShader: `
+    precision mediump float;
+    uniform mat4 perspective;
+    uniform mat4 cameraPosition;
+    uniform mat4 camera;
+
+    attribute vec3 vertexPosition;
+    varying vec3 fragmentPosition;
+
+    void main(void) {
+        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);
+        fragmentPosition = vertexPosition;
+    }
+    `,
+    fragmentShader: `
+    precision mediump float;
+
+    uniform vec3 eyeLocation;
+    uniform vec3 lightDirection;
+
+    uniform sampler2D noiseTexture;
+
+    uniform mat4 shadowPerspective;
+    uniform mat4 shadowCameraPosition;
+    uniform mat4 shadowCamera;
+    uniform float shadowScale;
+    uniform vec3 shadowSource;
+    uniform sampler2D shadowMap;
+
+    uniform float time;
+
+    varying vec3 fragmentPosition;
+
+    float height(vec2 pos) {
+        float waveSpeed = 0.5;
+        float amt = 0.5;
+        return mix(
+            -abs(texture2D(noiseTexture, pos + vec2(time*waveSpeed, 0.0)).r - 0.5) * 6.0,
+            -abs(texture2D(noiseTexture, pos + vec2(0.73 - time*waveSpeed, 0.43)).r - 0.5) * 6.0,
+            amt
+        );
+    }
+
+    float shadowLightness() {
+        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);
+        vec2 screen = projected.xy / projected.w;
+        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {
+            // only place shadows on things within the shadowmap's view
+            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;
+            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));
+            if (realDistance > shadowDistance + 0.01) {
+                return 0.0;
+            }
+        }
+        return 1.0;
+    }
+
+    vec3 sky(vec3 dir) {
+        if (dir.y > 0.0) {
+            dir = -dir;
+        }
+        vec3 ambient = vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);
+        vec3 sun = pow(dot(dir, lightDirection)*0.5 + 0.5, 800.0) * vec3(1.0, 1.0, 0.7);
+        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + sun*mix(0.1, 1.0, shadowLightness());
+    }
+
+    void main(void) {
+
+        vec2 pos = fragmentPosition.xz * 0.3;
+
+        vec3 normal = normalize(cross(
+            vec3(1.0, height(pos + vec2(0.01, 0.00)) - height(pos), 0.0),
+            vec3(0.0, height(pos + vec2(0.00, 0.01)) - height(pos), 1.0)
+        ));
+        if (normal.y > 0.0) {
+            normal = -normal;
+        }
+
+        vec3 incident = normalize(fragmentPosition - eyeLocation);
+        vec3 bounced = reflect(incident, normal);
+        vec3 color = sky(bounced);
+        gl_FragColor = vec4(color, 1.0);
+    }
+    `,
+    specification: waterSpecification,
+    context: gl,
+    target: "screen",
 });
 
 let lightDirection: Vec3 = unit([2, -4, 2]);
@@ -629,6 +756,10 @@ for (let triangle of meshTriangles) {
 glacier.bufferTriangles(meshTriangles.map((x) => x.vertices));
 let onlyPosition = meshTriangles.map(triangle => triangle.vertices.map(vertex => ({vertexPosition: vertex.vertexPosition})));
 shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
+waterGlacier.bufferTriangles([
+    [{vertexPosition: [-90, 1, -90]},{vertexPosition: [90, 1, -90]},{vertexPosition: [90, 1, 90]}],
+    [{vertexPosition: [-90, 1, -90]},{vertexPosition: [-90, 1, 90]},{vertexPosition: [90, 1, 90]}],
+]); // slices to only take vertexPosition
 
 let meanCenter: Vec3 = function(): Vec3 {
     let sum = {x: 0, y: 0};
@@ -811,10 +942,28 @@ function loop() {
         shadowCameraPosition,
         shadowSource,
         shadowScale,
+        noiseTexture: {index: 1, texture: noiseTexture},
     });
     glacier.draw({clearColor: [0, 0, 0]});
     glacier.deactivate();
-    
+    waterGlacier.activate();
+    waterGlacier.setUniform({
+        perspective,
+        camera,
+        cameraPosition,
+        eyeLocation: from,
+        lightDirection,
+        noiseTexture: {index: 1, texture: noiseTexture},
+        time: (Date.now() / 10000) % 1000,
+        shadowPerspective,
+        shadowCamera,
+        shadowCameraPosition,
+        shadowScale,
+        shadowSource,
+        shadowMap: {index: 0, texture: getGlacialTexture(shadowGlacier)}, // TODO: sorta spooky
+    });
+    waterGlacier.draw({clearColor: "no-clear"});
+    waterGlacier.deactivate();
 }
 
 loop();

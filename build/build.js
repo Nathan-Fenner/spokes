@@ -558,6 +558,20 @@ define("glacial", ["require", "exports"], function (require, exports) {
                 this.viewport = [0, 0, 600, 600]; // TODO: make this configurable
             }
         }
+        Glacier.prototype.loadTexture = function (src, callback) {
+            var _this = this;
+            var image = new Image();
+            var texture = this.gl.createTexture(); // TODO: error 
+            image.src = src;
+            image.onload = function () {
+                _this.gl.bindTexture(_this.gl.TEXTURE_2D, texture);
+                _this.gl.texImage2D(_this.gl.TEXTURE_2D, 0, _this.gl.RGBA, _this.gl.RGBA, _this.gl.UNSIGNED_BYTE, image);
+                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MAG_FILTER, _this.gl.NEAREST);
+                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MIN_FILTER, _this.gl.NEAREST);
+                callback();
+            };
+            return texture;
+        };
         Glacier.prototype.bufferTriangles = function (triangles) {
             for (var attribute in this.attributeBuffers) {
                 var flattened = [];
@@ -640,11 +654,10 @@ define("glacial", ["require", "exports"], function (require, exports) {
             }
         };
         Glacier.prototype.draw = function (options) {
-            if (options === void 0) { options = {}; }
-            if (options.clearColor) {
+            if (options.clearColor && options.clearColor != "no-clear") {
                 this.gl.clearColor(options.clearColor[0], options.clearColor[1], options.clearColor[2], 1);
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
             }
-            this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
             // assign each buffer to its attribute
             var sizeof = {
                 float: 1,
@@ -723,7 +736,8 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             shadowCamera: glacial_1.Glacier.mat4,
             shadowCameraPosition: glacial_1.Glacier.mat4,
             shadowScale: glacial_1.Glacier.float,
-            shadowSource: glacial_1.Glacier.vec3
+            shadowSource: glacial_1.Glacier.vec3,
+            noiseTexture: glacial_1.Glacier.image
         },
         attributes: {
             vertexPosition: glacial_1.Glacier.vec3,
@@ -734,10 +748,15 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     };
     exports.glacier = new glacial_1.Glacier({
         vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    attribute vec3 vertexColor;\n    attribute vec3 vertexNormal;\n    attribute float vertexBanding;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n        fragmentColor = vertexColor;\n        fragmentNormal = vertexNormal;\n        fragmentBanding = vertexBanding;\n    }\n\n    ",
-        fragmentShader: "\n    precision mediump float;\n    uniform vec3 lightDirection;\n    uniform sampler2D shadowMap;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCamera;\n    uniform mat4 shadowCameraPosition;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n    \n    uniform mat4 cameraPosition;\n    \n    void main(void) {\n        vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;\n        vec3 eyeDir = normalize(eye - fragmentPosition);\n        if (dot(eyeDir, fragmentNormal) > 0.0) {\n            discard;\n        }\n\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.45 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n\n        // shadows below\n\n        if (dot(fragmentNormal, lightDirection) > 0.0) {\n            // check before shadow map lookup\n            gl_FragColor.rgb *= 0.5; // shadowed\n        } else {\n            vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n            vec2 screen = projected.xy / projected.w;\n            if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n                // only place shadows on things within the shadowmap's view\n                float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n                float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n                if (realDistance > shadowDistance + 0.01) {\n                    gl_FragColor.rgb *= 0.5; // shadowed\n                }\n            }\n        }\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n    uniform vec3 lightDirection;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCamera;\n    uniform mat4 shadowCameraPosition;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n    uniform sampler2D shadowMap;\n\n    varying vec3 fragmentPosition;\n    varying vec3 fragmentColor;\n    varying vec3 fragmentNormal;\n    varying float fragmentBanding;\n    \n    uniform mat4 cameraPosition;\n\n    uniform sampler2D noiseTexture;\n    \n    void main(void) {\n        vec3 eye = -(cameraPosition * vec4(0.0, 0.0, 0.0, 1.0)).xyz;\n        vec3 eyeDir = normalize(eye - fragmentPosition);\n        if (dot(eyeDir, fragmentNormal) > 0.0) {\n            discard;\n        }\n\n        float y = min(1.0, max(0.0, 0.6 - fragmentPosition.y * 0.2));\n        float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.45 + 0.65;\n        gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);\n        float originalHeight = fragmentPosition.y * -4.0;\n        if (fragmentBanding > 0.91) {\n            gl_FragColor.rgb *= 0.96;\n        }\n        if (fragmentBanding > 0.95) {\n            gl_FragColor.rgb *= 0.95;\n        }\n\n        // shadows below\n\n        if (dot(fragmentNormal, lightDirection) > 0.0) {\n            // check before shadow map lookup\n            gl_FragColor.rgb *= 0.5; // shadowed\n        } else {\n            vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n            vec2 screen = projected.xy / projected.w;\n            if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n                // only place shadows on things within the shadowmap's view\n                float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n                float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n                if (realDistance > shadowDistance + 0.01) {\n                    gl_FragColor.rgb *= 0.5; // shadowed\n                }\n            }\n        }\n\n        // TODO: fewer texture samples here\n        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xz * 0.1).r);\n        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xy * vec2(0.05, 0.5)).r);\n        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.zy * vec2(0.05, 0.5)).r);\n    }\n    ",
         specification: specification,
         context: gl,
         target: "screen"
+    });
+    var noiseAvailable = false;
+    var noiseTexture = exports.glacier.loadTexture("noise.png", function () {
+        noiseAvailable = true;
+        console.log("loaded");
     });
     var shadowSpecification = {
         uniforms: {
@@ -757,6 +776,33 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         specification: shadowSpecification,
         context: gl,
         target: "texture"
+    });
+    var waterSpecification = {
+        uniforms: {
+            perspective: glacial_1.Glacier.mat4,
+            camera: glacial_1.Glacier.mat4,
+            cameraPosition: glacial_1.Glacier.mat4,
+            noiseTexture: glacial_1.Glacier.image,
+            eyeLocation: glacial_1.Glacier.vec3,
+            lightDirection: glacial_1.Glacier.vec3,
+            time: glacial_1.Glacier.float,
+            shadowMap: glacial_1.Glacier.image,
+            shadowPerspective: glacial_1.Glacier.mat4,
+            shadowCamera: glacial_1.Glacier.mat4,
+            shadowCameraPosition: glacial_1.Glacier.mat4,
+            shadowScale: glacial_1.Glacier.float,
+            shadowSource: glacial_1.Glacier.vec3
+        },
+        attributes: {
+            vertexPosition: glacial_1.Glacier.vec3
+        }
+    };
+    var waterGlacier = new glacial_1.Glacier({
+        vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    varying vec3 fragmentPosition;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform vec3 eyeLocation;\n    uniform vec3 lightDirection;\n\n    uniform sampler2D noiseTexture;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCameraPosition;\n    uniform mat4 shadowCamera;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n    uniform sampler2D shadowMap;\n\n    uniform float time;\n\n    varying vec3 fragmentPosition;\n\n    float height(vec2 pos) {\n        float waveSpeed = 0.5;\n        float amt = 0.5;\n        return mix(\n            -abs(texture2D(noiseTexture, pos + vec2(time*waveSpeed, 0.0)).r - 0.5) * 6.0,\n            -abs(texture2D(noiseTexture, pos + vec2(0.73 - time*waveSpeed, 0.43)).r - 0.5) * 6.0,\n            amt\n        );\n    }\n\n    float shadowLightness() {\n        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n        vec2 screen = projected.xy / projected.w;\n        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n            // only place shadows on things within the shadowmap's view\n            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n            if (realDistance > shadowDistance + 0.01) {\n                return 0.0;\n            }\n        }\n        return 1.0;\n    }\n\n    vec3 sky(vec3 dir) {\n        if (dir.y > 0.0) {\n            dir = -dir;\n        }\n        vec3 ambient = vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);\n        vec3 sun = pow(dot(dir, lightDirection)*0.5 + 0.5, 800.0) * vec3(1.0, 1.0, 0.7);\n        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + sun*mix(0.1, 1.0, shadowLightness());\n    }\n\n    void main(void) {\n\n        vec2 pos = fragmentPosition.xz * 0.3;\n\n        vec3 normal = normalize(cross(\n            vec3(1.0, height(pos + vec2(0.01, 0.00)) - height(pos), 0.0),\n            vec3(0.0, height(pos + vec2(0.00, 0.01)) - height(pos), 1.0)\n        ));\n        if (normal.y > 0.0) {\n            normal = -normal;\n        }\n\n        vec3 incident = normalize(fragmentPosition - eyeLocation);\n        vec3 bounced = reflect(incident, normal);\n        vec3 color = sky(bounced);\n        gl_FragColor = vec4(color, 1.0);\n    }\n    ",
+        specification: waterSpecification,
+        context: gl,
+        target: "screen"
     });
     var lightDirection = matrix_1.unit([2, -4, 2]);
     // Now, let's create the vertices for our triangle, and send them to the GPU.
@@ -1105,6 +1151,10 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     exports.glacier.bufferTriangles(meshTriangles.map(function (x) { return x.vertices; }));
     var onlyPosition = meshTriangles.map(function (triangle) { return triangle.vertices.map(function (vertex) { return ({ vertexPosition: vertex.vertexPosition }); }); });
     exports.shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
+    waterGlacier.bufferTriangles([
+        [{ vertexPosition: [-90, 1, -90] }, { vertexPosition: [90, 1, -90] }, { vertexPosition: [90, 1, 90] }],
+        [{ vertexPosition: [-90, 1, -90] }, { vertexPosition: [-90, 1, 90] }, { vertexPosition: [90, 1, 90] }],
+    ]); // slices to only take vertexPosition
     var meanCenter = function () {
         var sum = { x: 0, y: 0 };
         for (var _i = 0, _a = world.heightMap.cells(); _i < _a.length; _i++) {
@@ -1281,10 +1331,29 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             shadowCamera: shadowCamera,
             shadowCameraPosition: shadowCameraPosition,
             shadowSource: shadowSource,
-            shadowScale: shadowScale
+            shadowScale: shadowScale,
+            noiseTexture: { index: 1, texture: noiseTexture }
         });
         exports.glacier.draw({ clearColor: [0, 0, 0] });
         exports.glacier.deactivate();
+        waterGlacier.activate();
+        waterGlacier.setUniform({
+            perspective: perspective,
+            camera: camera,
+            cameraPosition: cameraPosition,
+            eyeLocation: from,
+            lightDirection: lightDirection,
+            noiseTexture: { index: 1, texture: noiseTexture },
+            time: (Date.now() / 10000) % 1000,
+            shadowPerspective: shadowPerspective,
+            shadowCamera: shadowCamera,
+            shadowCameraPosition: shadowCameraPosition,
+            shadowScale: shadowScale,
+            shadowSource: shadowSource,
+            shadowMap: { index: 0, texture: glacial_1.getGlacialTexture(exports.shadowGlacier) }
+        });
+        waterGlacier.draw({ clearColor: "no-clear" });
+        waterGlacier.deactivate();
     }
     loop();
 });
