@@ -281,7 +281,7 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
     varying vec3 fragmentPosition;
 
     float height(vec2 pos) {
-        float waveSpeed = 0.5;
+        float waveSpeed = 0.2;
         float amt = 0.5;
         return mix(
             -abs(texture2D(noiseTexture, pos + vec2(time*waveSpeed, 0.0)).r - 0.5) * 6.0,
@@ -315,11 +315,11 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
 
     void main(void) {
 
-        vec2 pos = fragmentPosition.xz * 0.3;
+        vec2 pos = fragmentPosition.xz * 0.1;
 
         vec3 normal = normalize(cross(
-            vec3(1.0, height(pos + vec2(0.01, 0.00)) - height(pos), 0.0),
-            vec3(0.0, height(pos + vec2(0.00, 0.01)) - height(pos), 1.0)
+            vec3(1.0, height(pos + vec2(0.02, 0.00)) - height(pos), 0.0),
+            vec3(0.0, height(pos + vec2(0.00, 0.02)) - height(pos), 1.0)
         ));
         if (normal.y > 0.0) {
             normal = -normal;
