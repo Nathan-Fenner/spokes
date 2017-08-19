@@ -540,9 +540,9 @@ define("glacial", ["require", "exports"], function (require, exports) {
                 var texture = gl.createTexture(); // TODO: catch error
                 gl.bindTexture(gl.TEXTURE_2D, texture);
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, textureSize, textureSize, 0, gl.RGBA, gl.UNSIGNED_BYTE, undefined);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, textureSize, textureSize, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
                 // assign frame depth
                 gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
                 gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
@@ -566,8 +566,8 @@ define("glacial", ["require", "exports"], function (require, exports) {
             image.onload = function () {
                 _this.gl.bindTexture(_this.gl.TEXTURE_2D, texture);
                 _this.gl.texImage2D(_this.gl.TEXTURE_2D, 0, _this.gl.RGBA, _this.gl.RGBA, _this.gl.UNSIGNED_BYTE, image);
-                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MAG_FILTER, _this.gl.NEAREST);
-                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MIN_FILTER, _this.gl.NEAREST);
+                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MAG_FILTER, _this.gl.LINEAR);
+                _this.gl.texParameteri(_this.gl.TEXTURE_2D, _this.gl.TEXTURE_MIN_FILTER, _this.gl.LINEAR);
                 callback();
             };
             return texture;
@@ -758,6 +758,10 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
         noiseAvailable = true;
         console.log("loaded");
     });
+    var waveDeltaAvailable = false;
+    var waveDeltaTexture = exports.glacier.loadTexture("waveDelta.png", function () {
+        waveDeltaAvailable = true;
+    });
     var shadowSpecification = {
         uniforms: {
             perspective: glacial_1.Glacier.mat4,
@@ -783,6 +787,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             camera: glacial_1.Glacier.mat4,
             cameraPosition: glacial_1.Glacier.mat4,
             noiseTexture: glacial_1.Glacier.image,
+            waveDeltaTexture: glacial_1.Glacier.image,
             eyeLocation: glacial_1.Glacier.vec3,
             lightDirection: glacial_1.Glacier.vec3,
             time: glacial_1.Glacier.float,
@@ -799,7 +804,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
     };
     var waterGlacier = new glacial_1.Glacier({
         vertexShader: "\n    precision mediump float;\n    uniform mat4 perspective;\n    uniform mat4 cameraPosition;\n    uniform mat4 camera;\n\n    attribute vec3 vertexPosition;\n    varying vec3 fragmentPosition;\n\n    void main(void) {\n        gl_Position = perspective * camera * cameraPosition * vec4(vertexPosition, 1.0);\n        fragmentPosition = vertexPosition;\n    }\n    ",
-        fragmentShader: "\n    precision mediump float;\n\n    uniform vec3 eyeLocation;\n    uniform vec3 lightDirection;\n\n    uniform sampler2D noiseTexture;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCameraPosition;\n    uniform mat4 shadowCamera;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n    uniform sampler2D shadowMap;\n\n    uniform float time;\n\n    varying vec3 fragmentPosition;\n\n    float height(vec2 pos) {\n        float waveSpeed = 0.2;\n        float amt = 0.5;\n        return mix(\n            -abs(texture2D(noiseTexture, pos + vec2(time*waveSpeed, 0.0)).r - 0.5) * 6.0,\n            -abs(texture2D(noiseTexture, pos + vec2(0.73 - time*waveSpeed, 0.43)).r - 0.5) * 6.0,\n            amt\n        );\n    }\n\n    float shadowLightness() {\n        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n        vec2 screen = projected.xy / projected.w;\n        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n            // only place shadows on things within the shadowmap's view\n            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n            if (realDistance > shadowDistance + 0.01) {\n                return 0.0;\n            }\n        }\n        return 1.0;\n    }\n\n    vec3 sky(vec3 dir) {\n        if (dir.y > 0.0) {\n            dir = -dir;\n        }\n        vec3 ambient = vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);\n        vec3 sun = pow(dot(dir, lightDirection)*0.5 + 0.5, 800.0) * vec3(1.0, 1.0, 0.7);\n        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + sun*mix(0.1, 1.0, shadowLightness());\n    }\n\n    void main(void) {\n\n        vec2 pos = fragmentPosition.xz * 0.1;\n\n        vec3 normal = normalize(cross(\n            vec3(1.0, height(pos + vec2(0.02, 0.00)) - height(pos), 0.0),\n            vec3(0.0, height(pos + vec2(0.00, 0.02)) - height(pos), 1.0)\n        ));\n        if (normal.y > 0.0) {\n            normal = -normal;\n        }\n\n        vec3 incident = normalize(fragmentPosition - eyeLocation);\n        vec3 bounced = reflect(incident, normal);\n        vec3 color = sky(bounced);\n        gl_FragColor = vec4(color, 1.0);\n    }\n    ",
+        fragmentShader: "\n    precision mediump float;\n\n    uniform vec3 eyeLocation;\n    uniform vec3 lightDirection;\n\n    uniform sampler2D noiseTexture;\n    uniform sampler2D waveDeltaTexture;\n\n    uniform mat4 shadowPerspective;\n    uniform mat4 shadowCameraPosition;\n    uniform mat4 shadowCamera;\n    uniform float shadowScale;\n    uniform vec3 shadowSource;\n    uniform sampler2D shadowMap;\n\n    uniform float time;\n\n    varying vec3 fragmentPosition;\n\n    vec2 deltaAt(vec2 pos) {\n        return texture2D(waveDeltaTexture, pos).rb * 2.0 - 1.0;\n    }\n\n    vec2 analyticDelta(vec2 pos) {\n        return 10.0 * (deltaAt(pos * 0.1) * 0.5 + deltaAt(pos + time*vec2(0.3, 0.7)) * 0.5 + deltaAt(pos * 1.3 + 4.0 + time*vec2(-0.4, -0.7)) * 0.5);\n    }\n\n    float shadowLightness() {\n        vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);\n        vec2 screen = projected.xy / projected.w;\n        if (abs(screen.x) < 1.0 && abs(screen.y) < 1.0) {\n            // only place shadows on things within the shadowmap's view\n            float shadowDistance = texture2D(shadowMap, screen*0.5 + 0.5).r;\n            float realDistance = max(0.0, min(1.0, distance(fragmentPosition, shadowSource) / shadowScale * 2.0 - 1.0));\n            if (realDistance > shadowDistance + 0.01) {\n                return 0.0;\n            }\n        }\n        return 1.0;\n    }\n\n    vec3 sky(vec3 dir) {\n        if (dir.y > 0.0) {\n            dir = -dir;\n        }\n        vec3 ambient = vec3(0.4, 0.5, 0.9); // vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);\n        vec3 sun = pow(dot(dir, lightDirection)*0.5 + 0.5, 800.0) * vec3(1.0, 1.0, 0.7);\n        vec3 halo = 0.2 * pow(dot(dir, lightDirection)*0.5 + 0.5, 3.0) * vec3(1.0, 1.0, 0.7);\n\n        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + (sun + halo)*mix(0.1 + max(0.0, dir.y)*0.9, 1.0, shadowLightness());\n    }\n\n    void main(void) {\n\n        vec2 pos = fragmentPosition.xz * 0.1;\n\n        // float h = height(pos);\n\n        vec2 delta = analyticDelta(pos);\n\n        vec3 normal = normalize(cross(\n            vec3(1.0, delta.x, 0.0),\n            vec3(0.0, delta.y, 1.0)\n        ));\n        if (normal.y > 0.0) {\n            normal = -normal;\n        }\n\n        vec3 incident = normalize(fragmentPosition - eyeLocation);\n        vec3 bounced = reflect(incident, normal);\n        vec3 skyColor = sky(bounced);\n        \n        vec3 ocean = vec3(0.05, 0.2, 0.35);\n        float fresnel = pow(clamp(1.0 - dot(normal, incident), 0.0, 1.0), 3.0) * 0.65;\n\n        gl_FragColor = vec4(mix(skyColor, ocean, fresnel), 1.0);\n    }\n    ",
         specification: waterSpecification,
         context: gl,
         target: "screen"
@@ -1344,6 +1349,7 @@ define("main", ["require", "exports", "generation", "utility", "matrix", "glacia
             eyeLocation: from,
             lightDirection: lightDirection,
             noiseTexture: { index: 1, texture: noiseTexture },
+            waveDeltaTexture: { index: 2, texture: waveDeltaTexture },
             time: (Date.now() / 10000) % 1000,
             shadowPerspective: shadowPerspective,
             shadowCamera: shadowCamera,

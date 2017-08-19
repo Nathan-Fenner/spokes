@@ -2,8 +2,7 @@
     "compilerOptions": {
         "module": "amd",
         "sourceMap": true,
-        "strictNullChecks": true,
-        "noImplicitAny": true,
+        "strict": true,
         "outDir": "./build",
         "outFile":"./build/build.js"
     }

@@ -178,6 +178,11 @@ let noiseTexture: WebGLTexture = glacier.loadTexture("noise.png", () => {
     console.log("loaded");
 });
 
+let waveDeltaAvailable = false;
+let waveDeltaTexture: WebGLTexture = glacier.loadTexture("waveDelta.png", () => {
+    waveDeltaAvailable = true;
+});
+
 let shadowSpecification = {
     uniforms: {
         perspective: Glacier.mat4,
@@ -230,6 +235,7 @@ let waterSpecification = {
         camera: Glacier.mat4,
         cameraPosition: Glacier.mat4,
         noiseTexture: Glacier.image,
+        waveDeltaTexture: Glacier.image,
         eyeLocation: Glacier.vec3,
         lightDirection: Glacier.vec3,
         time: Glacier.float,
@@ -268,6 +274,7 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
     uniform vec3 lightDirection;
 
     uniform sampler2D noiseTexture;
+    uniform sampler2D waveDeltaTexture;
 
     uniform mat4 shadowPerspective;
     uniform mat4 shadowCameraPosition;
@@ -280,14 +287,12 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
 
     varying vec3 fragmentPosition;
 
-    float height(vec2 pos) {
-        float waveSpeed = 0.2;
-        float amt = 0.5;
-        return mix(
-            -abs(texture2D(noiseTexture, pos + vec2(time*waveSpeed, 0.0)).r - 0.5) * 6.0,
-            -abs(texture2D(noiseTexture, pos + vec2(0.73 - time*waveSpeed, 0.43)).r - 0.5) * 6.0,
-            amt
-        );
+    vec2 deltaAt(vec2 pos) {
+        return texture2D(waveDeltaTexture, pos).rb * 2.0 - 1.0;
+    }
+
+    vec2 analyticDelta(vec2 pos) {
+        return 10.0 * (deltaAt(pos * 0.1) * 0.5 + deltaAt(pos + time*vec2(0.3, 0.7)) * 0.5 + deltaAt(pos * 1.3 + 4.0 + time*vec2(-0.4, -0.7)) * 0.5);
     }
 
     float shadowLightness() {
@@ -308,18 +313,24 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
         if (dir.y > 0.0) {
             dir = -dir;
         }
-        vec3 ambient = vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);
+        vec3 ambient = vec3(0.4, 0.5, 0.9); // vec3(0.2, 0.25, 0.29) * (texture2D(noiseTexture, vec2(dir.xz)).r*1.5 - 0.5);
         vec3 sun = pow(dot(dir, lightDirection)*0.5 + 0.5, 800.0) * vec3(1.0, 1.0, 0.7);
-        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + sun*mix(0.1, 1.0, shadowLightness());
+        vec3 halo = 0.2 * pow(dot(dir, lightDirection)*0.5 + 0.5, 3.0) * vec3(1.0, 1.0, 0.7);
+
+        return (vec3(0.09, 0.12, 0.2) + ambient)*mix(0.6, 1.0, shadowLightness()) + (sun + halo)*mix(0.1 + max(0.0, dir.y)*0.9, 1.0, shadowLightness());
     }
 
     void main(void) {
 
         vec2 pos = fragmentPosition.xz * 0.1;
 
+        // float h = height(pos);
+
+        vec2 delta = analyticDelta(pos);
+
         vec3 normal = normalize(cross(
-            vec3(1.0, height(pos + vec2(0.02, 0.00)) - height(pos), 0.0),
-            vec3(0.0, height(pos + vec2(0.00, 0.02)) - height(pos), 1.0)
+            vec3(1.0, delta.x, 0.0),
+            vec3(0.0, delta.y, 1.0)
         ));
         if (normal.y > 0.0) {
             normal = -normal;
@@ -327,8 +338,12 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
 
         vec3 incident = normalize(fragmentPosition - eyeLocation);
         vec3 bounced = reflect(incident, normal);
-        vec3 color = sky(bounced);
-        gl_FragColor = vec4(color, 1.0);
+        vec3 skyColor = sky(bounced);
+        
+        vec3 ocean = vec3(0.05, 0.2, 0.35);
+        float fresnel = pow(clamp(1.0 - dot(normal, incident), 0.0, 1.0), 3.0) * 0.65;
+
+        gl_FragColor = vec4(mix(skyColor, ocean, fresnel), 1.0);
     }
     `,
     specification: waterSpecification,
@@ -429,13 +444,13 @@ for (let p of world.heightMap.cells()) {
 
         let hexColor: Vec3 = [0.4, 0.6, 0.25];
         // dirt: [0.9, 0.65, 0.35];
-        hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8));
+        hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8)) as any;
 
         addTriangle([ax, cornerAHeight, ay], [wx, mainHeight, wy], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: 1}, "surface");
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = hexColor; //  [0.3, 0.4, 0.2]
-        grassColor = grassColor.map((x) => Math.max(0, x * 0.7 - 0.05));
+        grassColor = grassColor.map((x) => Math.max(0, x * 0.7 - 0.05)) as any;
 
         let adjacentTile = neighbors[(i+1)%6];
         if (!world.heightMap.contains(adjacentTile) || world.heightMap.get(adjacentTile) < world.heightMap.get(p) - 1) {
@@ -607,7 +622,7 @@ for (let p of world.heightMap.cells()) {
                     [rockX + Math.cos(s/5*Math.PI*2)*r, rockH + d, rockY + Math.sin(s/5*Math.PI*2)*r],
                     [rockX, rockH - h, rockY],
                     [rockX + Math.cos((s+1)/5*Math.PI*2)*r, rockH + d, rockY + Math.sin((s+1)/5*Math.PI*2)*r],
-                    {vertexColor: hexColor.map((x) => x * 0.3 + 0.6)},
+                    {vertexColor: hexColor.map((x) => x * 0.3 + 0.6) as any},
                     "rock",
                 );
             }
@@ -755,7 +770,7 @@ for (let triangle of meshTriangles) {
 
 glacier.bufferTriangles(meshTriangles.map((x) => x.vertices));
 let onlyPosition = meshTriangles.map(triangle => triangle.vertices.map(vertex => ({vertexPosition: vertex.vertexPosition})));
-shadowGlacier.bufferTriangles(onlyPosition); // slices to only take vertexPosition
+shadowGlacier.bufferTriangles(onlyPosition as any); // slices to only take vertexPosition
 waterGlacier.bufferTriangles([
     [{vertexPosition: [-90, 1, -90]},{vertexPosition: [90, 1, -90]},{vertexPosition: [90, 1, 90]}],
     [{vertexPosition: [-90, 1, -90]},{vertexPosition: [-90, 1, 90]},{vertexPosition: [90, 1, 90]}],
@@ -947,6 +962,7 @@ function loop() {
     glacier.draw({clearColor: [0, 0, 0]});
     glacier.deactivate();
     waterGlacier.activate();
+    
     waterGlacier.setUniform({
         perspective,
         camera,
@@ -954,6 +970,7 @@ function loop() {
         eyeLocation: from,
         lightDirection,
         noiseTexture: {index: 1, texture: noiseTexture},
+        waveDeltaTexture: {index: 2, texture: waveDeltaTexture},
         time: (Date.now() / 10000) % 1000,
         shadowPerspective,
         shadowCamera,
