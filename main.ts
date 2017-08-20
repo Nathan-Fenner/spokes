@@ -162,9 +162,9 @@ export let glacier = new Glacier<typeof specification, "screen">({
         }
 
         // TODO: fewer texture samples here
-        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xz * 0.1).r);
-        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xy * vec2(0.05, 0.5)).r);
-        gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.zy * vec2(0.05, 0.5)).r);
+        //gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xz * 0.1).r);
+        //gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.xy * vec2(0.05, 0.5)).r);
+        //gl_FragColor.rgb *= mix(0.7, 1.3, texture2D(noiseTexture, fragmentPosition.zy * vec2(0.05, 0.5)).r);
     }
     `,
     specification,
@@ -291,10 +291,6 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
         return texture2D(waveDeltaTexture, pos).rb * 2.0 - 1.0;
     }
 
-    vec2 analyticDelta(vec2 pos) {
-        return 10.0 * (deltaAt(pos * 0.1) * 0.5 + deltaAt(pos + time*vec2(0.3, 0.7)) * 0.5 + deltaAt(pos * 1.3 + 4.0 + time*vec2(-0.4, -0.7)) * 0.5);
-    }
-
     float shadowLightness() {
         vec4 projected = shadowPerspective * shadowCamera * shadowCameraPosition * vec4(fragmentPosition, 1.0);
         vec2 screen = projected.xy / projected.w;
@@ -326,7 +322,13 @@ let waterGlacier = new Glacier<typeof waterSpecification, "screen">({
 
         // float h = height(pos);
 
-        vec2 delta = analyticDelta(pos);
+        float scale1 = 1.0;
+        float timeScale1 = 3.0;
+        float scale2 = 0.2;
+        float timeScale2 = 1.0;
+        vec2 delta = vec2(0.0, 0.0);
+
+
 
         vec3 normal = normalize(cross(
             vec3(1.0, delta.x, 0.0),
@@ -764,7 +766,7 @@ for (let triangle of meshTriangles) {
         continue;
     }
     for (let vertex of triangle.vertices) {
-        vertex.vertexNormal = unit(add(...normalSmoother.get(vertex.vertexPosition)));
+        // vertex.vertexNormal = unit(add(...normalSmoother.get(vertex.vertexPosition)));
     }
 }
 
@@ -971,7 +973,7 @@ function loop() {
         lightDirection,
         noiseTexture: {index: 1, texture: noiseTexture},
         waveDeltaTexture: {index: 2, texture: waveDeltaTexture},
-        time: (Date.now() / 10000) % 1000,
+        time: (Date.now() / 1000) % 1000,
         shadowPerspective,
         shadowCamera,
         shadowCameraPosition,
