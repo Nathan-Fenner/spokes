@@ -136,11 +136,8 @@ export let glacier = new Glacier<typeof specification, "screen">({
         float lambert = -dot(normalize(fragmentNormal), normalize(lightDirection)) * 0.45 + 0.65;
         gl_FragColor = vec4(lambert * y * fragmentColor, 1.0);
         float originalHeight = fragmentPosition.y * -4.0;
-        if (fragmentBanding > 0.91) {
-            gl_FragColor.rgb *= 0.96;
-        }
-        if (fragmentBanding > 0.95) {
-            gl_FragColor.rgb *= 0.95;
+        if (fragmentBanding > 0.9) {
+            gl_FragColor.rgb *= 0.8;
         }
 
         // shadows below
@@ -392,14 +389,14 @@ function triangleNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
     return unit(cross(subtract(b, a), subtract(c, a)));
 }
 
-function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec3, vertexBanding?: number}, group?: string) {
-    let banding = attributes.vertexBanding || 0;
+function addTriangle(va: Vec3, vb: Vec3, vc: Vec3, attributes: {vertexColor: Vec3, vertexBanding?: Vec3}, group?: string) {
+    let banding = attributes.vertexBanding || [0, 0, 0];
     let normal = triangleNormal(va, vb, vc);
     meshTriangles.push({
         vertices: [
-            {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding},
-            {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: 0},
-            {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding}
+            {vertexPosition: va, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding[0]},
+            {vertexPosition: vb, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding[1]},
+            {vertexPosition: vc, vertexNormal: normal, vertexColor: attributes.vertexColor, vertexBanding: banding[2]}
         ],
         metadata: {group},
     });
@@ -434,9 +431,22 @@ for (let p of world.heightMap.cells()) {
     }
 
     for (let i = 0; i < 6; i++) {
+        let adjacentTile = neighbors[(i+1)%6];
+
+        let lerp = (from: number, to: number, t: number): number => {
+            return from * (1-t) + to * t;
+        };
+        let lerpW = (from: WorldPos, to: WorldPos, t: number): WorldPos => {
+            return {wx: lerp(from.wx, to.wx, t), wy: lerp(from.wy, to.wy, t)};
+        };
+
         let {wx, wy} = hexToWorld(p);
         let {wx: ax, wy: ay} = corners[i].point; // cs[i];
         let {wx: bx, wy: by} = corners[(i+1)%6].point;
+
+        let inset = 0.3;
+        let {wx: amx, wy: amy} = lerpW({wx: ax, wy: ay}, {wx, wy}, inset);
+        let {wx: bmx, wy: bmy} = lerpW({wx: bx, wy: by}, {wx, wy}, inset);
 
         let reheight = (h: number) => -h * 0.25;
 
@@ -444,17 +454,33 @@ for (let p of world.heightMap.cells()) {
         let cornerAHeight = reheight(corners[i].height);
         let cornerBHeight = reheight(corners[(i+1)%6].height);
 
+        let joinLength = 0.5;
+        let joinHeight = mainHeight;
+        if (world.heightMap.contains(adjacentTile) && Math.abs(world.heightMap.get(adjacentTile) - world.heightMap.get(p)) <= 1) {
+            joinHeight = (reheight(world.heightMap.get(p)) + reheight(world.heightMap.get(adjacentTile))) / 2;
+        }
+
+        let {wx: jax, wy: jay} = lerpW({wx: ax, wy: ay}, {wx: bx, wy: by}, (1 - joinLength)/2);
+        let {wx: jbx, wy: jby} = lerpW({wx: bx, wy: by}, {wx: ax, wy: ay}, (1 - joinLength)/2);
+
         let hexColor: Vec3 = [0.4, 0.6, 0.25];
         // dirt: [0.9, 0.65, 0.35];
-        hexColor = hexColor.map((x) => x * (world.heightMap.get(p) * 0.04 + 0.8)) as any;
+        hexColor = hexColor.map((x) => x * (0.85 + (world.heightMap.get(p)%3 * 0.13) )) as any;
 
-        addTriangle([ax, cornerAHeight, ay], [wx, mainHeight, wy], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: 1}, "surface");
+        addTriangle([amx, mainHeight, amy], [wx, mainHeight, wy], [bmx, mainHeight, bmy], {vertexColor: hexColor, vertexBanding: [inset,0,inset]}, "surface");
+
+        // a, ma, ja
+        addTriangle([ax, cornerAHeight, ay], [amx, mainHeight, amy], [jax, joinHeight, jay], {vertexColor: hexColor, vertexBanding: [1, inset, 1]}, "surface");
+        // ja, ma, mb, jb
+        addTriangle([jax, joinHeight, jay], [amx, mainHeight, amy], [bmx, mainHeight, bmy], {vertexColor: hexColor, vertexBanding: [1, inset, inset]}, "surface");
+        addTriangle([jax, joinHeight, jay], [bmx, mainHeight, bmy], [jbx, joinHeight, jby], {vertexColor: hexColor, vertexBanding: [1, inset, 1]}, "surface");
+        // jb, mb, b
+        addTriangle([jbx, joinHeight, jby], [bmx, mainHeight, bmy], [bx, cornerBHeight, by], {vertexColor: hexColor, vertexBanding: [1, inset, 1]}, "surface");
 
         let sideShadow = 0.4;
         let grassColor: Vec3 = hexColor; //  [0.3, 0.4, 0.2]
         grassColor = grassColor.map((x) => Math.max(0, x * 0.7 - 0.05)) as any;
 
-        let adjacentTile = neighbors[(i+1)%6];
         if (!world.heightMap.contains(adjacentTile) || world.heightMap.get(adjacentTile) < world.heightMap.get(p) - 1) {
             let stoneColor = (light = 1) => {
                 let bright = 1.25 + Math.random()*0.5;
@@ -462,10 +488,17 @@ for (let p of world.heightMap.cells()) {
                 let grey = 0.4;
                 return add(scale(bright*grey, hexColor), scale(1-grey, [1,1,1]));
             };
-            addTriangle([ax, cornerAHeight, ay], [bx, cornerBHeight, by], [bx, 8, by], {vertexColor: stoneColor()}, "wall");
-            addTriangle([ax, cornerAHeight, ay], [bx, 8, by], [ax, 8, ay], {vertexColor: stoneColor()}, "wall");
+            addTriangle([ax, cornerAHeight, ay], [jax, joinHeight, jay], [jax, 8, jay], {vertexColor: stoneColor()}, "wall");
+            addTriangle([ax, cornerAHeight, ay], [jax, 8, jay], [ax, 8, ay], {vertexColor: stoneColor()}, "wall");
+
+            addTriangle([jax, joinHeight, jay], [jbx, joinHeight, jby], [jbx, 8, jby], {vertexColor: stoneColor()}, "wall");
+            addTriangle([jax, joinHeight, jay], [jbx, 8, jby], [jax, 8, jay], {vertexColor: stoneColor()}, "wall");
+
+            addTriangle([bx, cornerBHeight, by], [jbx, 8, jby], [jbx, joinHeight, jby], {vertexColor: stoneColor()}, "wall");
+            addTriangle([bx, cornerBHeight, by], [bx, 8, by], [jbx, 8, jby], {vertexColor: stoneColor()}, "wall");
+
             for (let j = 0; j < 2; j++) {
-                let wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                let wallDifference = subtract([bx, 0, by], [ax, 0, ay]);
                 let wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
                 let outDir = unit([wallDir[2], 0, -wallDir[0]]);
                 let wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
@@ -474,7 +507,7 @@ for (let p of world.heightMap.cells()) {
                 let boxWidth = Math.random() * 0.1 + 0.05;
                 let boxHeight = Math.random() * 0.05 + 0.01;
 
-                let topA: Vec3 = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                let topA: Vec3 = add([ax, mainHeight - boxHeight, ay], scale(boxStart, wallDir));
                 let botA: Vec3 = add([ax, 8, ay], scale(boxStart, wallDir));
                 let up: Vec3 = [0, -1, 0];
 
@@ -520,7 +553,7 @@ for (let p of world.heightMap.cells()) {
 
             // TODO: only if the height difference is large enough
             for (let j = 0; j < 2; j++) {
-                let wallDifference = subtract([bx, cornerBHeight, by], [ax, cornerAHeight, ay]);
+                let wallDifference = subtract([bx, 0, by], [ax, 0, ay]);
                 let wallDir = scale(1 / magnitude([wallDifference[0], 0, wallDifference[2]]), wallDifference);
                 let outDir = unit([wallDir[2], 0, -wallDir[0]]);
                 let wallLength = magnitude([wallDifference[0], 0, wallDifference[2]]);
@@ -529,7 +562,7 @@ for (let p of world.heightMap.cells()) {
                 let boxWidth = Math.random() * 0.2 + 0.2;
                 let boxHeight = -Math.random() * 1 - 0.15;
 
-                let topA: Vec3 = add([ax, cornerAHeight - boxHeight, ay], scale(boxStart, wallDir));
+                let topA: Vec3 = add([ax, mainHeight - boxHeight, ay], scale(boxStart, wallDir));
                 let botA: Vec3 = add([ax, 8, ay], scale(boxStart, wallDir));
                 let up: Vec3 = [0, -1, 0];
 
@@ -647,7 +680,7 @@ for (let p of world.heightMap.cells()) {
                             add(base, f2(h+step)),
                             {
                                 vertexColor: color,
-                                vertexBanding: 0,
+                                vertexBanding: [0,0,0],
                             },
                             "tower",
                         );
@@ -657,7 +690,7 @@ for (let p of world.heightMap.cells()) {
                             add(base, f1(h+step)),
                             {
                                 vertexColor: color,
-                                vertexBanding: 0,
+                                vertexBanding: [0,0,0],
                             },
                             "tower",
                         );
@@ -766,7 +799,7 @@ for (let triangle of meshTriangles) {
         continue;
     }
     for (let vertex of triangle.vertices) {
-        // vertex.vertexNormal = unit(add(...normalSmoother.get(vertex.vertexPosition)));
+        vertex.vertexNormal = unit(add(scale(0.5, vertex.vertexNormal), unit(add(...normalSmoother.get(vertex.vertexPosition)))));
     }
 }
 
